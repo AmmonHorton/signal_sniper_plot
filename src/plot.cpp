@@ -24,6 +24,11 @@ struct ZoomRegion {
     double ymin, ymax;
 };
 
+enum class XAxisMode { TIME, INDEX };
+
+static XAxisMode g_xaxis_mode = XAxisMode::TIME;
+static std::string g_plot_title;
+
 static std::vector<PlotSample> g_samples;
 static std::stack<ZoomRegion> g_zoom_stack;
 static PlotMode g_mode = PlotMode::Magnitude;
@@ -116,22 +121,39 @@ static void draw_text(Display* dpy, Drawable win, GC gc, int x, int y, const std
 }
 
 static void render_axes(Display* dpy, Drawable win, GC gc,
-                        const ZoomRegion& r, int px, int py, int pw, int ph) {
-    const int ticks = 5;
-    for (int i = 0; i <= ticks; ++i) {
-        double t = r.xmin + i * (r.xmax - r.xmin) / ticks;
-        int x = px + (int)((t - r.xmin) / (r.xmax - r.xmin) * pw);
-        XDrawLine(dpy, win, gc, x, py + ph, x, py + ph + 5);
-        std::ostringstream ss; ss.precision(2); ss << std::fixed << t;
-        draw_text(dpy, win, gc, x - 10, py + ph + 20, ss.str());
-    }
-    for (int i = 0; i <= ticks; ++i) {
-        double v = r.ymin + i * (r.ymax - r.ymin) / ticks;
-        int y = py + (int)((r.ymax - v) / (r.ymax - r.ymin) * ph);
-        XDrawLine(dpy, win, gc, px - 5, y, px, y);
-        std::ostringstream ss; ss.precision(2); ss << std::fixed << v;
-        draw_text(dpy, win, gc, 5, y + 4, ss.str());
-    }
+    const ZoomRegion& r, int px, int py, int pw, int ph,
+    int num_samples, bool use_index) {
+const int ticks = 5;
+
+// X-axis ticks
+for (int i = 0; i <= ticks; ++i) {
+double val = use_index
+? i * (num_samples - 1) / (double)ticks
+: r.xmin + i * (r.xmax - r.xmin) / ticks;
+
+int x = px + i * pw / ticks;
+XDrawLine(dpy, win, gc, x, py + ph, x, py + ph + 5);
+
+char label[32];
+if (use_index)
+snprintf(label, sizeof(label), "%d", (int)val);
+else
+snprintf(label, sizeof(label), "%.2f", val);
+
+draw_text(dpy, win, gc, x - 10, py + ph + 20, label);
+}
+
+// Y-axis ticks
+for (int i = 0; i <= ticks; ++i) {
+double v = r.ymin + i * (r.ymax - r.ymin) / ticks;
+int y = py + (int)((r.ymax - v) / (r.ymax - r.ymin) * ph);
+XDrawLine(dpy, win, gc, px - 5, y, px, y);
+
+std::ostringstream ss;
+ss.precision(2);
+ss << std::fixed << v;
+draw_text(dpy, win, gc, 5, y + 4, ss.str());
+}
 }
 
 static void render_plot(Display* dpy, Window win, GC gc, int w, int h,
@@ -142,7 +164,6 @@ int px = w * LEFT_MARGIN, py = h * TOP_MARGIN;
 int pw = w * (1 - LEFT_MARGIN - RIGHT_MARGIN);
 int ph = h * (1 - TOP_MARGIN - BOTTOM_MARGIN);
 
-// Draw signal
 std::vector<XPoint> pts;
 for (auto& s : g_samples) {
 if (s.time < r.xmin || s.time > r.xmax) continue;
@@ -151,32 +172,30 @@ int x = px + (int)((s.time - r.xmin) / (r.xmax - r.xmin) * pw);
 int y = py + (int)((r.ymax - val) / (r.ymax - r.ymin) * ph);
 pts.push_back({(short)x, (short)y});
 }
+
 if (pts.size() > 1) {
-    XRectangle clip;
-    clip.x = px;
-    clip.y = py;
-    clip.width = pw;
-    clip.height = ph;
-    XSetClipRectangles(dpy, gc, 0, 0, &clip, 1, Unsorted);
+XRectangle clip;
+clip.x = px;
+clip.y = py;
+clip.width = pw;
+clip.height = ph;
+XSetClipRectangles(dpy, gc, 0, 0, &clip, 1, Unsorted);
 
-    XSetForeground(dpy, gc, COLOR_FG);
-    XDrawLines(dpy, win, gc, pts.data(), pts.size(), CoordModeOrigin);
+XSetForeground(dpy, gc, COLOR_FG);
+XDrawLines(dpy, win, gc, pts.data(), pts.size(), CoordModeOrigin);
 
-    XSetClipMask(dpy, gc, None); // Reset clipping
+XSetClipMask(dpy, gc, None);
 }
 
-// Draw plot bounding box
 XSetForeground(dpy, gc, COLOR_FG);
 XDrawRectangle(dpy, win, gc, px, py, pw, ph);
 
-// Draw axis ticks and labels in foreground color
-render_axes(dpy, win, gc, r, px, py, pw, ph);
+render_axes(dpy, win, gc, r, px, py, pw, ph, g_samples.size(), g_xaxis_mode == XAxisMode::INDEX);
 
-// Draw mode and readout
-draw_text(dpy, win, gc, px, py - 10, "Mode: " + mode_to_string(g_mode));
-draw_text(dpy, win, gc, px + 250, py - 10, readout);
+draw_text(dpy, win, gc, w / 2 - (g_plot_title.length() * 3), py - 20, g_plot_title);
+draw_text(dpy, win, gc, px, py + ph + 40, "Mode: " + mode_to_string(g_mode));
+draw_text(dpy, win, gc, px + 200, py + ph + 40, readout);
 
-// Toolbar
 int tool_y = h - TOOLBAR_HEIGHT, xpos = 20;
 for (auto& b : toolbar_buttons) {
 XDrawRectangle(dpy, win, gc, xpos, tool_y, 100, TOOLBAR_HEIGHT - 10);
@@ -185,7 +204,6 @@ b.x = xpos; b.width = 100;
 xpos += 120;
 }
 
-// Zoom box
 if (bx0 >= 0 && bx1 >= 0) {
 int zx = std::min(bx0, bx1), zy = std::min(by0, by1);
 int zw = std::abs(bx1 - bx0), zh = std::abs(by1 - by0);
@@ -195,101 +213,119 @@ XDrawRectangle(dpy, win, gc, zx, zy, zw, zh);
 }
 
 void plot_buffer(const void* data, std::size_t num_elements, std::size_t elem_bytes,
-                 bool is_complex, bool is_float, double xstart, double xdelta) {
-    g_samples = process_buffer(data, num_elements, elem_bytes, is_complex, is_float, xstart, xdelta);
-    if (g_samples.empty()) return;
+bool is_complex, bool is_float, double xstart, double xdelta,
+const std::string& plot_title) {
+g_plot_title = plot_title;
+g_samples = process_buffer(data, num_elements, elem_bytes, is_complex, is_float, xstart, xdelta);
+if (g_samples.empty()) return;
 
-    Display* dpy = XOpenDisplay(nullptr);
-    if (!dpy) { std::cerr << "X11 not available.\n"; return; }
+Display* dpy = XOpenDisplay(nullptr);
+if (!dpy) { std::cerr << "X11 not available.\n"; return; }
 
-    int screen = DefaultScreen(dpy);
-    int w = 1000, h = 600;
-    Window win = XCreateSimpleWindow(dpy, RootWindow(dpy, screen), 10, 10, w, h, 1,
-                                     BlackPixel(dpy, screen), WhitePixel(dpy, screen));
-    XSelectInput(dpy, win, ExposureMask | ButtonPressMask | ButtonReleaseMask |
-                            PointerMotionMask | StructureNotifyMask);
-    XMapWindow(dpy, win);
-    GC gc = XCreateGC(dpy, win, 0, nullptr);
+int screen = DefaultScreen(dpy);
+int w = 1000, h = 600;
+Window win = XCreateSimpleWindow(dpy, RootWindow(dpy, screen), 10, 10, w, h, 1,
+                 BlackPixel(dpy, screen), WhitePixel(dpy, screen));
+XSelectInput(dpy, win, ExposureMask | ButtonPressMask | ButtonReleaseMask |
+        PointerMotionMask | StructureNotifyMask);
+XMapWindow(dpy, win);
+GC gc = XCreateGC(dpy, win, 0, nullptr);
 
-    COLOR_BG = WhitePixel(dpy, screen);
-    COLOR_FG = BlackPixel(dpy, screen);
-    COLOR_BOX = 0xFF0000;
-    COLOR_TEXT = 0x003366;
+COLOR_BG = WhitePixel(dpy, screen);
+COLOR_FG = BlackPixel(dpy, screen);
+COLOR_BOX = 0xFF0000;
+COLOR_TEXT = 0x003366;
 
-    ZoomRegion view = autoscale_region(g_samples, g_mode);
-    int bx0 = -1, by0 = -1, bx1 = -1, by1 = -1;
-    bool dragging = false;
-    std::string readout;
+ZoomRegion view = autoscale_region(g_samples, g_mode);
+int bx0 = -1, by0 = -1, bx1 = -1, by1 = -1;
+bool dragging = false;
+std::string readout;
 
-    toolbar_buttons = {
-        {"Save PNG", 0, 100},
-        {"Cycle Mode", 0, 100},
-        {"Reset Zoom", 0, 100}
-    };
+toolbar_buttons = {
+{"Save PNG", 0, 100},
+{"Cycle Mode", 0, 100},
+{"Reset Zoom", 0, 100},
+{"Cycle X-Axis", 0, 120}
+};
 
-    while (true) {
-        XEvent e; XNextEvent(dpy, &e);
-        if (e.type == ConfigureNotify) {
-            w = e.xconfigure.width; h = e.xconfigure.height;
-            render_plot(dpy, win, gc, w, h, view, readout);
-        } else if (e.type == Expose) {
-            render_plot(dpy, win, gc, w, h, view, readout);
-        } else if (e.type == MotionNotify) {
-            double t = view.xmin + (e.xmotion.x - w * LEFT_MARGIN) / (w * (1 - LEFT_MARGIN - RIGHT_MARGIN)) * (view.xmax - view.xmin);
-            double v = view.ymax - (e.xmotion.y - h * TOP_MARGIN) / (h * (1 - TOP_MARGIN - BOTTOM_MARGIN)) * (view.ymax - view.ymin);
-            std::ostringstream ss; ss.precision(2); ss << "Time: " << t << " Value: " << v;
-            readout = ss.str();
-            if (dragging) { bx1 = e.xmotion.x; by1 = e.xmotion.y; }
-            render_plot(dpy, win, gc, w, h, view, readout, bx0, by0, bx1, by1);
-        } else if (e.type == ButtonPress) {
-            if (e.xbutton.y >= h - TOOLBAR_HEIGHT) {
-                for (auto& b : toolbar_buttons) {
-                    if (e.xbutton.x >= b.x && e.xbutton.x <= b.x + b.width) {
-                        if (b.label == "Save PNG") save_window_to_ppm(dpy, win, w, h, "plot_out.ppm");
-                        else if (b.label == "Cycle Mode") {
-                            g_mode = static_cast<PlotMode>((static_cast<int>(g_mode) + 1) % 4);
-                            view = autoscale_region(g_samples, g_mode);
-                            while (!g_zoom_stack.empty()) g_zoom_stack.pop();
-                        } else if (b.label == "Reset Zoom") {
-                            view = autoscale_region(g_samples, g_mode);
-                            while (!g_zoom_stack.empty()) g_zoom_stack.pop();
-                        }
-                    }
-                }
-            } else if (e.xbutton.button == Button1) {
-                dragging = true;
-                bx0 = bx1 = e.xbutton.x;
-                by0 = by1 = e.xbutton.y;
-            } else if (e.xbutton.button == Button2) {
-                g_mode = static_cast<PlotMode>((static_cast<int>(g_mode) + 1) % 4);
-                view = autoscale_region(g_samples, g_mode);
-                while (!g_zoom_stack.empty()) g_zoom_stack.pop();
-                render_plot(dpy, win, gc, w, h, view, readout);
-            } else if (e.xbutton.button == Button3) {
-                if (!g_zoom_stack.empty()) { view = g_zoom_stack.top(); g_zoom_stack.pop(); }
-                render_plot(dpy, win, gc, w, h, view, readout);
-            }
-        } else if (e.type == ButtonRelease && dragging) {
-            dragging = false;
-            int x1 = std::min(bx0, bx1), x2 = std::max(bx0, bx1);
-            int y1 = std::min(by0, by1), y2 = std::max(by0, by1);
-            int px = w * LEFT_MARGIN, py = h * TOP_MARGIN;
-            int pw = w * (1 - LEFT_MARGIN - RIGHT_MARGIN);
-            int ph = h * (1 - TOP_MARGIN - BOTTOM_MARGIN);
+while (true) {
+XEvent e; XNextEvent(dpy, &e);
+if (e.type == ConfigureNotify) {
+w = e.xconfigure.width; h = e.xconfigure.height;
+render_plot(dpy, win, gc, w, h, view, readout);
+} else if (e.type == Expose) {
+render_plot(dpy, win, gc, w, h, view, readout);
+} else if (e.type == MotionNotify) {
+    double t = (g_xaxis_mode == XAxisMode::TIME)
+        ? view.xmin + (e.xmotion.x - w * LEFT_MARGIN) / (w * (1 - LEFT_MARGIN - RIGHT_MARGIN)) * (view.xmax - view.xmin)
+        : (e.xmotion.x - w * LEFT_MARGIN) / (w * (1 - LEFT_MARGIN - RIGHT_MARGIN)) * (g_samples.size() - 1);
 
-            if (x2 - x1 > 10 && y2 - y1 > 10) {
-                g_zoom_stack.push(view);
-                double nxmin = view.xmin + (x1 - px) / (double)pw * (view.xmax - view.xmin);
-                double nxmax = view.xmin + (x2 - px) / (double)pw * (view.xmax - view.xmin);
-                double nymax = view.ymin + (y1 - py) / (double)ph * (view.ymax - view.ymin);
-                double nymin = view.ymin + (y2 - py) / (double)ph * (view.ymax - view.ymin);
-                view = {nxmin, nxmax, nymin, nymax};
-            }
+    double v = view.ymax - (e.xmotion.y - h * TOP_MARGIN) / (h * (1 - TOP_MARGIN - BOTTOM_MARGIN)) * (view.ymax - view.ymin);
 
-            bx0 = bx1 = by0 = by1 = -1;
-            render_plot(dpy, win, gc, w, h, view, readout);
-        }
+    std::ostringstream ss;
+    ss.precision(2);
+    if (g_xaxis_mode == XAxisMode::TIME)
+        ss << "Time: " << t;
+    else
+        ss << "Index: " << (int)t;
+    ss << "  Value: " << v;
+
+    readout = ss.str();
+    if (dragging) { bx1 = e.xmotion.x; by1 = e.xmotion.y; }
+    render_plot(dpy, win, gc, w, h, view, readout, bx0, by0, bx1, by1);
+} else if (e.type == ButtonPress) {
+if (e.xbutton.y >= h - TOOLBAR_HEIGHT) {
+for (auto& b : toolbar_buttons) {
+if (e.xbutton.x >= b.x && e.xbutton.x <= b.x + b.width) {
+    if (b.label == "Save PNG") save_window_to_ppm(dpy, win, w, h, "plot_out.ppm");
+    else if (b.label == "Cycle Mode") {
+        g_mode = static_cast<PlotMode>((static_cast<int>(g_mode) + 1) % 4);
+        view = autoscale_region(g_samples, g_mode);
+        while (!g_zoom_stack.empty()) g_zoom_stack.pop();
+    } else if (b.label == "Reset Zoom") {
+        view = autoscale_region(g_samples, g_mode);
+        while (!g_zoom_stack.empty()) g_zoom_stack.pop();
+    } else if (b.label == "Cycle X-Axis") {
+        g_xaxis_mode = (g_xaxis_mode == XAxisMode::TIME)
+                     ? XAxisMode::INDEX
+                     : XAxisMode::TIME;
     }
+}
+}
+} else if (e.xbutton.button == Button1) {
+dragging = true;
+bx0 = bx1 = e.xbutton.x;
+by0 = by1 = e.xbutton.y;
+} else if (e.xbutton.button == Button2) {
+g_mode = static_cast<PlotMode>((static_cast<int>(g_mode) + 1) % 4);
+view = autoscale_region(g_samples, g_mode);
+while (!g_zoom_stack.empty()) g_zoom_stack.pop();
+render_plot(dpy, win, gc, w, h, view, readout);
+} else if (e.xbutton.button == Button3) {
+if (!g_zoom_stack.empty()) { view = g_zoom_stack.top(); g_zoom_stack.pop(); }
+render_plot(dpy, win, gc, w, h, view, readout);
+}
+} else if (e.type == ButtonRelease && dragging) {
+dragging = false;
+int x1 = std::min(bx0, bx1), x2 = std::max(bx0, bx1);
+int y1 = std::min(by0, by1), y2 = std::max(by0, by1);
+int px = w * LEFT_MARGIN, py = h * TOP_MARGIN;
+int pw = w * (1 - LEFT_MARGIN - RIGHT_MARGIN);
+int ph = h * (1 - TOP_MARGIN - BOTTOM_MARGIN);
+
+if (x2 - x1 > 10 && y2 - y1 > 10) {
+g_zoom_stack.push(view);
+double nxmin = view.xmin + (x1 - px) / (double)pw * (view.xmax - view.xmin);
+double nxmax = view.xmin + (x2 - px) / (double)pw * (view.xmax - view.xmin);
+double nymax = view.ymin + (y1 - py) / (double)ph * (view.ymax - view.ymin);
+double nymin = view.ymin + (y2 - py) / (double)ph * (view.ymax - view.ymin);
+view = {nxmin, nxmax, nymin, nymax};
+}
+
+bx0 = bx1 = by0 = by1 = -1;
+render_plot(dpy, win, gc, w, h, view, readout);
+}
+}
 }
 
 }  // namespace xplot
