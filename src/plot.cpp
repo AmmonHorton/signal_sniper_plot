@@ -374,8 +374,8 @@ while (true) {
                         g_zoom_stack.push(view);
                         double nxmin = view.xmin + (x1 - px) / (double)pw * (view.xmax - view.xmin);
                         double nxmax = view.xmin + (x2 - px) / (double)pw * (view.xmax - view.xmin);
-                        double nymax = view.ymin + (y1 - py) / (double)ph * (view.ymax - view.ymin);
-                        double nymin = view.ymin + (y2 - py) / (double)ph * (view.ymax - view.ymin);
+                        double nymin = view.ymax - (y2 - py) / (double)ph * (view.ymax - view.ymin);
+                        double nymax = view.ymax - (y1 - py) / (double)ph * (view.ymax - view.ymin);
                         view = {nxmin, nxmax, nymin, nymax};
                         needs_redraw = true;
                     }
