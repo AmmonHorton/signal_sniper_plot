@@ -135,48 +135,63 @@ static void render_axes(Display* dpy, Drawable win, GC gc,
 }
 
 static void render_plot(Display* dpy, Window win, GC gc, int w, int h,
-                        const ZoomRegion& r, const std::string& readout,
-                        int bx0 = -1, int by0 = -1, int bx1 = -1, int by1 = -1) {
-    XClearWindow(dpy, win);
-    int px = w * LEFT_MARGIN, py = h * TOP_MARGIN;
-    int pw = w * (1 - LEFT_MARGIN - RIGHT_MARGIN);
-    int ph = h * (1 - TOP_MARGIN - BOTTOM_MARGIN);
+    const ZoomRegion& r, const std::string& readout,
+    int bx0 = -1, int by0 = -1, int bx1 = -1, int by1 = -1) {
+XClearWindow(dpy, win);
+int px = w * LEFT_MARGIN, py = h * TOP_MARGIN;
+int pw = w * (1 - LEFT_MARGIN - RIGHT_MARGIN);
+int ph = h * (1 - TOP_MARGIN - BOTTOM_MARGIN);
 
-    // Draw signal
-    std::vector<XPoint> pts;
-    for (auto& s : g_samples) {
-        if (s.time < r.xmin || s.time > r.xmax) continue;
-        double val = compute_value(s, g_mode);
-        int x = px + (int)((s.time - r.xmin) / (r.xmax - r.xmin) * pw);
-        int y = py + (int)((r.ymax - val) / (r.ymax - r.ymin) * ph);
-        pts.push_back({(short)x, (short)y});
-    }
-    if (pts.size() > 1) {
-        XSetForeground(dpy, gc, COLOR_FG);
-        XDrawLines(dpy, win, gc, pts.data(), pts.size(), CoordModeOrigin);
-    }
+// Draw signal
+std::vector<XPoint> pts;
+for (auto& s : g_samples) {
+if (s.time < r.xmin || s.time > r.xmax) continue;
+double val = compute_value(s, g_mode);
+int x = px + (int)((s.time - r.xmin) / (r.xmax - r.xmin) * pw);
+int y = py + (int)((r.ymax - val) / (r.ymax - r.ymin) * ph);
+pts.push_back({(short)x, (short)y});
+}
+if (pts.size() > 1) {
+    XRectangle clip;
+    clip.x = px;
+    clip.y = py;
+    clip.width = pw;
+    clip.height = ph;
+    XSetClipRectangles(dpy, gc, 0, 0, &clip, 1, Unsorted);
 
-    XSetForeground(dpy, gc, COLOR_TEXT);
-    render_axes(dpy, win, gc, r, px, py, pw, ph);
-    draw_text(dpy, win, gc, px, py - 10, "Mode: " + mode_to_string(g_mode));
-    draw_text(dpy, win, gc, px + 250, py - 10, readout);
+    XSetForeground(dpy, gc, COLOR_FG);
+    XDrawLines(dpy, win, gc, pts.data(), pts.size(), CoordModeOrigin);
 
-    // Toolbar
-    int tool_y = h - TOOLBAR_HEIGHT, xpos = 20;
-    for (auto& b : toolbar_buttons) {
-        XDrawRectangle(dpy, win, gc, xpos, tool_y, 100, TOOLBAR_HEIGHT - 10);
-        draw_text(dpy, win, gc, xpos + 10, tool_y + 18, b.label);
-        b.x = xpos; b.width = 100;
-        xpos += 120;
-    }
+    XSetClipMask(dpy, gc, None); // Reset clipping
+}
 
-    // Zoom box
-    if (bx0 >= 0 && bx1 >= 0) {
-        int zx = std::min(bx0, bx1), zy = std::min(by0, by1);
-        int zw = std::abs(bx1 - bx0), zh = std::abs(by1 - by0);
-        XSetForeground(dpy, gc, COLOR_BOX);
-        XDrawRectangle(dpy, win, gc, zx, zy, zw, zh);
-    }
+// Draw plot bounding box
+XSetForeground(dpy, gc, COLOR_FG);
+XDrawRectangle(dpy, win, gc, px, py, pw, ph);
+
+// Draw axis ticks and labels in foreground color
+render_axes(dpy, win, gc, r, px, py, pw, ph);
+
+// Draw mode and readout
+draw_text(dpy, win, gc, px, py - 10, "Mode: " + mode_to_string(g_mode));
+draw_text(dpy, win, gc, px + 250, py - 10, readout);
+
+// Toolbar
+int tool_y = h - TOOLBAR_HEIGHT, xpos = 20;
+for (auto& b : toolbar_buttons) {
+XDrawRectangle(dpy, win, gc, xpos, tool_y, 100, TOOLBAR_HEIGHT - 10);
+draw_text(dpy, win, gc, xpos + 10, tool_y + 18, b.label);
+b.x = xpos; b.width = 100;
+xpos += 120;
+}
+
+// Zoom box
+if (bx0 >= 0 && bx1 >= 0) {
+int zx = std::min(bx0, bx1), zy = std::min(by0, by1);
+int zw = std::abs(bx1 - bx0), zh = std::abs(by1 - by0);
+XSetForeground(dpy, gc, COLOR_BOX);
+XDrawRectangle(dpy, win, gc, zx, zy, zw, zh);
+}
 }
 
 void plot_buffer(const void* data, std::size_t num_elements, std::size_t elem_bytes,
