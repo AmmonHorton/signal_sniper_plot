@@ -3,7 +3,7 @@
 #include <cmath>
 
 int main() {
-    constexpr size_t N = 512;
+    constexpr size_t N = 1e3;
     std::vector<float> signal;
     for (size_t i = 0; i < N; ++i) {
         float t = i * 0.01f;

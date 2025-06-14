@@ -10,6 +10,7 @@
 #include <cstring>
 #include <unistd.h>
 #include <algorithm>
+#include <climits>
 
 namespace xplot {
 
@@ -172,38 +173,45 @@ static void render_pixmap(Display* dpy, Pixmap pixmap, GC gc, int w, int h,
     XFillRectangle(dpy, pixmap, gc, 0, 0, w, h);
 
     int plot_width = w * 0.9;
-    int plot_height = h * 0.80;
+    int plot_height = h * 0.72;
     int px = (w - plot_width) / 2;
     int py = (h - plot_height - TOOLBAR_HEIGHT - 30) / 2;
     int pw = plot_width;
     int ph = plot_height;
 
-    std::vector<XPoint> pts;
-    for (auto& s : g_samples) {
-        if (s.time < r.xmin || s.time > r.xmax) continue;
-        double val = compute_value(s, g_mode);
-        int x = px + (int)((s.time - r.xmin) / (r.xmax - r.xmin) * pw);
-        int y = py + (int)((r.ymax - val) / (r.ymax - r.ymin) * ph);
-        pts.push_back({(short)x, (short)y});
-    }
-
-    if (pts.size() > 1) {
-        XRectangle clip;
-        clip.x = px;
-        clip.y = py;
-        clip.width = pw;
-        clip.height = ph;
-        XSetClipRectangles(dpy, gc, 0, 0, &clip, 1, Unsorted);
-
-        XSetForeground(dpy, gc, COLOR_FG);
-        XDrawLines(dpy, pixmap, gc, pts.data(), pts.size(), CoordModeOrigin);
-
-        XSetClipMask(dpy, gc, None);
-    }
-
     XSetForeground(dpy, gc, COLOR_FG);
     XDrawRectangle(dpy, pixmap, gc, px, py, pw, ph);
-    render_axes(dpy, pixmap, gc, r, px, py, pw, ph, g_samples.size(), g_xaxis_mode == XAxisMode::INDEX);
+
+    bool use_index = g_xaxis_mode == XAxisMode::INDEX;
+    double xstart = r.xmin;
+    double xend = r.xmax;
+
+    std::vector<XPoint> line_points;
+    line_points.reserve(pw); // conservative estimate
+
+    for (std::size_t i = 0; i < g_samples.size(); ++i) {
+        double xval = use_index ? (double)i : g_samples[i].time;
+        if (xval < xstart || xval > xend) continue;
+
+        double val = compute_value(g_samples[i], g_mode);
+        int xpix = (int)((xval - xstart) / (xend - xstart) * pw);
+        if (xpix < 0 || xpix >= pw) continue;
+
+        int y = py + (int)((r.ymax - val) / (r.ymax - r.ymin) * ph);
+        if (y < py) y = py;
+        if (y >= py + ph) y = py + ph - 1;
+
+        int screen_x = px + xpix;
+        line_points.push_back({(short)screen_x, (short)y});
+    }
+
+    if (line_points.size() >= 2) {
+        XDrawLines(dpy, pixmap, gc, line_points.data(), line_points.size(), CoordModeOrigin);
+    } else if (line_points.size() == 1) {
+        XDrawPoint(dpy, pixmap, gc, line_points[0].x, line_points[0].y);
+    }
+
+    render_axes(dpy, pixmap, gc, r, px, py, pw, ph, g_samples.size(), use_index);
     draw_text(dpy, pixmap, gc, w / 2 - (title.length() * 3), py - 10, title);
 
     int tool_y = h - TOOLBAR_HEIGHT, xpos = 20;
@@ -214,6 +222,8 @@ static void render_pixmap(Display* dpy, Pixmap pixmap, GC gc, int w, int h,
         xpos += 120;
     }
 }
+
+
 
 void plot_buffer(const void* data, std::size_t num_elements, std::size_t elem_bytes,
     bool is_complex, bool is_float, double xstart, double xdelta,
