@@ -12,7 +12,8 @@ void plot_buffer(
     bool is_float,
     double xstart_j1950_sec,
     double xdelta_sec,
-    const std::string& plot_title
+    const std::string& plot_title,
+    int line_thickness
 );
 
 }  // namespace xplot
