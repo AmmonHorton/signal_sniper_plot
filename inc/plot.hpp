@@ -15,7 +15,8 @@ void plot_buffer(
     double xdelta_sec = 1.0,
     const std::string& plot_title = "Plot",
     int line_thickness = 2,
-    std::optional<std::pair<double, double>> y_range = std::nullopt
+    std::optional<std::pair<double, double>> y_range = std::nullopt,
+    std::size_t num_traces = 1
 );
 
 }  // namespace xplot

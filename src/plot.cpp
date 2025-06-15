@@ -37,6 +37,10 @@ struct Button {
 
 static std::vector<PlotSample> g_samples;
 static std::stack<ZoomRegion> g_zoom_stack;
+static int g_zoom_depth = 0;
+constexpr int MAX_ZOOM_HISTORY = 5;
+
+static std::vector<std::vector<PlotSample>> g_traces;
 static PlotMode g_mode = PlotMode::Magnitude;
 static XAxisMode g_xaxis_mode = XAxisMode::TIME;
 static PlotRenderStyle g_render_style = PlotRenderStyle::LINES;
@@ -89,7 +93,7 @@ static double compute_value(const PlotSample& s, PlotMode mode) {
         case PlotMode::Real: return s.real;
         case PlotMode::Imag: return s.imag;
         case PlotMode::Magnitude: return std::sqrt(s.real * s.real + s.imag * s.imag);
-        case PlotMode::Phase: return std::atan2(s.imag, s.real);
+        case PlotMode::Phase: return std::atan2(s.real, s.imag);
     }
     return s.real;
 }
@@ -139,7 +143,7 @@ struct DecimatedTrace {
     }
 };
 
-static DecimatedTrace g_cached_decimated;
+static std::vector<DecimatedTrace> g_cached_decimated_traces;
 
 
 static ZoomRegion autoscale_region(const std::vector<PlotSample>& samples, PlotMode mode, std::optional<std::pair<double, double>> y_range = std::nullopt) {
@@ -234,9 +238,15 @@ static void render_axes(Display* dpy, Drawable win, GC gc,
     }
 }
 
-void prepare_decimated_trace(const std::vector<PlotSample>& samples, PlotMode mode,
-    const ZoomRegion& view, int pixel_width, bool use_index) {
-    g_cached_decimated.update_if_needed(samples, mode, view, pixel_width, use_index);
+void prepare_decimated_traces(const std::vector<std::vector<PlotSample>>& traces,
+                              PlotMode mode, const ZoomRegion& view,
+                              int pixel_width, bool use_index) {
+    if (g_cached_decimated_traces.size() != traces.size())
+        g_cached_decimated_traces.resize(traces.size());
+
+    for (std::size_t i = 0; i < traces.size(); ++i) {
+        g_cached_decimated_traces[i].update_if_needed(traces[i], mode, view, pixel_width, use_index);
+    }
 }
 
 // Part 3/3: Optimized render_pixmap()
@@ -254,56 +264,76 @@ void render_pixmap(Display* dpy, Pixmap pixmap, GC gc, int w, int h,
     int ph = plot_height;
 
     bool use_index = g_xaxis_mode == XAxisMode::INDEX;
+    prepare_decimated_traces(g_traces, g_mode, r, pw, use_index);
 
-    XSetForeground(dpy, gc, COLOR_FG);
-    XDrawRectangle(dpy, pixmap, gc, px, py, pw, ph);
-
-    // Prepare decimated bins
-    prepare_decimated_trace(g_samples, g_mode, r, pw, use_index);
-    const auto& bins = g_cached_decimated.y_minmax_per_pixel;
+    std::vector<unsigned long> trace_colors = {
+        0x2CFF05, 0xFF0000, 0x00C0FF, 0xFF00FF, 0xFFFF00,
+        0xFFA500, 0x00FFFF, 0xFFFFFF, 0xFF69B4, 0xB22222
+    };
 
     XGCValues old_vals;
     XGetGCValues(dpy, gc, GCLineWidth | GCLineStyle | GCCapStyle | GCJoinStyle, &old_vals);
     XSetLineAttributes(dpy, gc, g_line_thickness, LineSolid, CapButt, JoinMiter);
-    XSetForeground(dpy, gc, COLOR_LINE);
 
-    int prev_x = -1, prev_y = -1;
+    // Draw all traces
+    for (std::size_t t = 0; t < g_traces.size(); ++t) {
+        if (t >= g_cached_decimated_traces.size()) continue;
+        const auto& bins = g_cached_decimated_traces[t].y_minmax_per_pixel;
+        if (bins.empty()) continue;
 
-    for (int xpix = 0; xpix < (int)bins.size(); ++xpix) {
-        const auto& [minv, maxv] = bins[xpix];
-        if (minv > maxv) continue; // No valid data
+        XSetForeground(dpy, gc, trace_colors[t % trace_colors.size()]);
+        int prev_x = -1, prev_y = -1;
 
-        int screen_x = px + xpix;
-        int y1 = py + (int)((r.ymax - minv) / (r.ymax - r.ymin) * ph);
-        int y2 = py + (int)((r.ymax - maxv) / (r.ymax - r.ymin) * ph);
+        for (int xpix = 0; xpix < (int)bins.size(); ++xpix) {
+            const auto& [minv, maxv] = bins[xpix];
+            if (minv > maxv) continue;
 
-        y1 = std::clamp(y1, py, py + ph - 1);
-        y2 = std::clamp(y2, py, py + ph - 1);
+            int screen_x = px + xpix;
+            int y1 = py + (int)((r.ymax - minv) / (r.ymax - r.ymin) * ph);
+            int y2 = py + (int)((r.ymax - maxv) / (r.ymax - r.ymin) * ph);
+            y1 = std::clamp(y1, py, py + ph - 1);
+            y2 = std::clamp(y2, py, py + ph - 1);
 
-        if (g_render_style == PlotRenderStyle::LINES) {
-            XDrawLine(dpy, pixmap, gc, screen_x, y1, screen_x, y2);
-
-            if (prev_x != -1 && std::abs(screen_x - prev_x) >= 1) {
-                XDrawLine(dpy, pixmap, gc, prev_x, prev_y, screen_x, y1);
+            if (g_render_style == PlotRenderStyle::LINES) {
+                XDrawLine(dpy, pixmap, gc, screen_x, y1, screen_x, y2);
+                if (prev_x != -1 && std::abs(screen_x - prev_x) >= 1) {
+                    XDrawLine(dpy, pixmap, gc, prev_x, prev_y, screen_x, y1);
+                }
+                prev_x = screen_x;
+                prev_y = y2;
+            } else {
+                render_thick_point(dpy, pixmap, gc, screen_x, y1, g_line_thickness);
+                if (minv != maxv)
+                    render_thick_point(dpy, pixmap, gc, screen_x, y2, g_line_thickness);
             }
-
-            prev_x = screen_x;
-            prev_y = y2;
-        } else {
-            render_thick_point(dpy, pixmap, gc, screen_x, y1, g_line_thickness);
-            if (minv != maxv)
-                render_thick_point(dpy, pixmap, gc, screen_x, y2, g_line_thickness);
         }
     }
 
-    // Restore GC
+    // Restore GC before drawing axes and borders
     XSetForeground(dpy, gc, COLOR_FG);
-    XSetLineAttributes(dpy, gc, old_vals.line_width, old_vals.line_style,
-                       old_vals.cap_style, old_vals.join_style);
+    XSetLineAttributes(dpy, gc, 1, LineSolid, CapButt, JoinMiter);
 
-    render_axes(dpy, pixmap, gc, r, px, py, pw, ph, g_samples.size(), use_index);
+    // Draw white border box around plot
+    XDrawRectangle(dpy, pixmap, gc, px, py, pw, ph);
+
+    // Axes
+    render_axes(dpy, pixmap, gc, r, px, py, pw, ph, g_traces[0].size(), use_index);
+
+    // Plot title
     draw_text(dpy, pixmap, gc, w / 2 - (title.length() * 3), py - 10, title);
 
+    // Legend (moved lower to avoid axis label conflict)
+    int legend_x = px + 10;
+    int legend_y = py + ph + 30;  // increased from +10 to +30
+    for (std::size_t t = 0; t < g_traces.size(); ++t) {
+        XSetForeground(dpy, gc, trace_colors[t % trace_colors.size()]);
+        XFillRectangle(dpy, pixmap, gc, legend_x, legend_y + 20 * t, 12, 12);
+        XSetForeground(dpy, gc, COLOR_FG);
+        std::string label = "Trace " + std::to_string(t);
+        draw_text(dpy, pixmap, gc, legend_x + 18, legend_y + 20 * t + 10, label);
+    }
+
+    // Toolbar
     int tool_y = h - TOOLBAR_HEIGHT, xpos = 20;
     for (auto& b : toolbar_buttons) {
         XDrawRectangle(dpy, pixmap, gc, xpos, tool_y, 100, TOOLBAR_HEIGHT - 10);
@@ -315,16 +345,38 @@ void render_pixmap(Display* dpy, Pixmap pixmap, GC gc, int w, int h,
 
 
 
+
 // Continuation of the plot_buffer and event loop with Toggle Style button support
 
 void plot_buffer(const void* data, std::size_t num_elements, std::size_t elem_bytes,
     bool is_complex, bool is_float, double xstart, double xdelta,
-    const std::string& plot_title, int line_thickness, std::optional<std::pair<double, double>> y_range) {
+    const std::string& plot_title, int line_thickness,
+    std::optional<std::pair<double, double>> y_range,
+    std::size_t num_traces) {
 
     g_plot_title = plot_title;
     g_line_thickness = line_thickness;
-    g_samples = process_buffer(data, num_elements, elem_bytes, is_complex, is_float, xstart, xdelta);
-    if (g_samples.empty()) return;
+    g_traces.clear();
+
+    if (num_traces == 0) return;
+    std::size_t trace_len = num_elements / num_traces;
+
+    const char* base = static_cast<const char*>(data);
+    trace_len = std::min(trace_len, num_elements);  // Clamp to avoid overrun
+    
+    int elem_bytes_complex = is_complex ? 2 * elem_bytes : elem_bytes;
+    for (std::size_t t = 0; t < num_traces; ++t) {
+        const void* trace_ptr = base + t * trace_len * elem_bytes_complex;
+        auto samples = process_buffer(trace_ptr, trace_len, elem_bytes, is_complex, is_float, xstart, xdelta);
+        if (!samples.empty()) {
+            g_traces.push_back(std::move(samples));
+        }
+    }
+    
+    if (g_traces.empty()) {
+        std::cerr << "No valid traces found.\n";
+        return;
+    }
 
     Display* dpy = XOpenDisplay(nullptr);
     if (!dpy) {
@@ -344,7 +396,11 @@ void plot_buffer(const void* data, std::size_t num_elements, std::size_t elem_by
     Pixmap pixmap = XCreatePixmap(dpy, win, w, h, DefaultDepth(dpy, screen));
     bool pixmap_dirty = true;
 
-    ZoomRegion view = autoscale_region(g_samples, g_mode, y_range);
+    
+    
+    ZoomRegion view = autoscale_region(g_traces[0], g_mode, y_range);
+    std::cout << "Plotting " << g_traces.size() << " traces with mode: " << mode_to_string(g_mode) << "\n";
+
     int bx0 = -1, by0 = -1, bx1 = -1, by1 = -1;
     bool dragging = false;
     std::string readout;
@@ -356,6 +412,7 @@ void plot_buffer(const void* data, std::size_t num_elements, std::size_t elem_by
         {"Cycle X-Axis", 0, 120},
         {"Toggle Style", 0, 120} // new button
     };
+
 
     XEvent e;
     while (true) {
@@ -421,19 +478,28 @@ void plot_buffer(const void* data, std::size_t num_elements, std::size_t elem_by
                                     save_pixmap_to_ppm(dpy, pixmap, w, h, "plot_out.ppm");
                                 } else if (b.label == "Cycle Mode") {
                                     g_mode = static_cast<PlotMode>((static_cast<int>(g_mode) + 1) % 4);
-                                    view = autoscale_region(g_samples, g_mode);
+
+                                    auto y_range_tmp = y_range;
+                                    if (g_mode == PlotMode::Phase) {
+                                        y_range_tmp = std::make_pair(-M_PI, M_PI);
+                                    }
+
+                                    view = autoscale_region(g_traces[0], g_mode, y_range_tmp);
                                     while (!g_zoom_stack.empty()) g_zoom_stack.pop();
+                                    g_zoom_depth = 0;
                                     pixmap_dirty = true;
                                 } else if (b.label == "Reset Zoom") {
-                                    view = autoscale_region(g_samples, g_mode);
+                                    view = autoscale_region(g_traces[0], g_mode, y_range);
                                     while (!g_zoom_stack.empty()) g_zoom_stack.pop();
+                                    g_zoom_depth = 0;
                                     pixmap_dirty = true;
                                 } else if (b.label == "Cycle X-Axis") {
                                     g_xaxis_mode = (g_xaxis_mode == XAxisMode::TIME)
                                         ? XAxisMode::INDEX
                                         : XAxisMode::TIME;
-                                    view = autoscale_region(g_samples, g_mode);  // <-- Recalculate view bounds
+                                    view = autoscale_region(g_traces[0], g_mode, y_range);  // <-- Recalculate view bounds
                                     while (!g_zoom_stack.empty()) g_zoom_stack.pop();
+                                    g_zoom_depth = 0;
                                     pixmap_dirty = true;
                                 } else if (b.label == "Toggle Style") {
                                     g_render_style = (g_render_style == PlotRenderStyle::LINES)
@@ -449,13 +515,15 @@ void plot_buffer(const void* data, std::size_t num_elements, std::size_t elem_by
                         by0 = by1 = e.xbutton.y;
                     } else if (e.xbutton.button == Button2) {
                         g_mode = static_cast<PlotMode>((static_cast<int>(g_mode) + 1) % 4);
-                        view = autoscale_region(g_samples, g_mode);
+                        view = autoscale_region(g_traces[0], g_mode);
                         while (!g_zoom_stack.empty()) g_zoom_stack.pop();
+                        g_zoom_depth = 0;
                         pixmap_dirty = true;
                     } else if (e.xbutton.button == Button3) {
                         if (!g_zoom_stack.empty()) {
                             view = g_zoom_stack.top();
                             g_zoom_stack.pop();
+                            g_zoom_depth--;
                             pixmap_dirty = true;
                         }
                     }
@@ -470,14 +538,18 @@ void plot_buffer(const void* data, std::size_t num_elements, std::size_t elem_by
                         int pw = w * (1 - LEFT_MARGIN - RIGHT_MARGIN);
                         int ph = h * (1 - TOP_MARGIN - BOTTOM_MARGIN);
 
-                        if (x2 - x1 > 10 && y2 - y1 > 10) {
-                            g_zoom_stack.push(view);
-                            double nxmin = view.xmin + (x1 - px) / (double)pw * (view.xmax - view.xmin);
-                            double nxmax = view.xmin + (x2 - px) / (double)pw * (view.xmax - view.xmin);
-                            double nymin = view.ymax - (y2 - py) / (double)ph * (view.ymax - view.ymin);
-                            double nymax = view.ymax - (y1 - py) / (double)ph * (view.ymax - view.ymin);
-                            view = {nxmin, nxmax, nymin, nymax};
-                            pixmap_dirty = true;
+                        
+                        if (g_zoom_depth < MAX_ZOOM_HISTORY) {
+                            if (x2 - x1 > 10 && y2 - y1 > 10) {
+                                g_zoom_stack.push(view);
+                                g_zoom_depth++;
+                                double nxmin = view.xmin + (x1 - px) / (double)pw * (view.xmax - view.xmin);
+                                double nxmax = view.xmin + (x2 - px) / (double)pw * (view.xmax - view.xmin);
+                                double nymin = view.ymax - (y2 - py) / (double)ph * (view.ymax - view.ymin);
+                                double nymax = view.ymax - (y1 - py) / (double)ph * (view.ymax - view.ymin);
+                                view = {nxmin, nxmax, nymin, nymax};
+                                pixmap_dirty = true;
+                            }
                         }
 
                         bx0 = bx1 = by0 = by1 = -1;
