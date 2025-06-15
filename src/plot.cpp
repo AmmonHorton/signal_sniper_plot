@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <algorithm>
 #include <climits>
+#include <map>
 
 namespace xplot {
 
@@ -42,7 +43,9 @@ static PlotRenderStyle g_render_style = PlotRenderStyle::LINES;
 static std::string g_plot_title;
 static std::vector<Button> toolbar_buttons;
 
-static unsigned long COLOR_BG, COLOR_FG, COLOR_BOX, COLOR_TEXT;
+constexpr unsigned long COLOR_BG = 0x000000; // Black background
+constexpr unsigned long COLOR_FG = 0xFFFFFF; // White foreground
+constexpr unsigned long COLOR_LINE = 0x2CFF05; // Green line color
 
 constexpr double LEFT_MARGIN = 0.08;
 constexpr double RIGHT_MARGIN = 0.03;
@@ -100,7 +103,7 @@ static std::string mode_to_string(PlotMode mode) {
     }
 }
 
-static ZoomRegion autoscale_region(const std::vector<PlotSample>& samples, PlotMode mode) {
+static ZoomRegion autoscale_region(const std::vector<PlotSample>& samples, PlotMode mode, std::optional<std::pair<double, double>> y_range = std::nullopt) {
     double tmin, tmax;
 
     if (g_xaxis_mode == XAxisMode::INDEX) {
@@ -113,18 +116,25 @@ static ZoomRegion autoscale_region(const std::vector<PlotSample>& samples, PlotM
 
     double vmin = compute_value(samples.front(), mode);
     double vmax = vmin;
-    for (const auto& s : samples) {
-        double v = compute_value(s, mode);
-        if (v < vmin) vmin = v;
-        if (v > vmax) vmax = v;
+    if (y_range) {
+        vmin = y_range->first;
+        vmax = y_range->second;
+    } else {
+        for (const auto& s : samples) {
+            double v = compute_value(s, mode);
+            vmin = std::min(vmin, v);
+            vmax = std::max(vmax, v);
+        }
     }
 
     double vrange = vmax - vmin;
     if (vrange == 0) {
         vmin -= 1.0; vmax += 1.0;
     } else {
-        vmin -= 0.05 * vrange;
-        vmax += 0.05 * vrange;
+        if (!y_range) {
+            vmin -= 0.05 * vrange;
+            vmax += 0.05 * vrange;
+        }
     }
 
     return {tmin, tmax, vmin, vmax};
@@ -186,8 +196,7 @@ static void render_axes(Display* dpy, Drawable win, GC gc,
 }
 
 void render_pixmap(Display* dpy, Pixmap pixmap, GC gc, int w, int h,
-    const ZoomRegion& r, const std::string& title) {
-
+                   const ZoomRegion& r, const std::string& title) {
     XSetForeground(dpy, gc, COLOR_BG);
     XFillRectangle(dpy, pixmap, gc, 0, 0, w, h);
 
@@ -205,8 +214,15 @@ void render_pixmap(Display* dpy, Pixmap pixmap, GC gc, int w, int h,
     double xstart = r.xmin;
     double xend = r.xmax;
 
-    std::vector<XPoint> line_points;
-    line_points.reserve(pw);
+    XGCValues old_vals;
+    XGetGCValues(dpy, gc, GCLineWidth | GCLineStyle | GCCapStyle | GCJoinStyle, &old_vals);
+    XSetLineAttributes(dpy, gc, g_line_thickness, LineSolid, CapButt, JoinMiter);
+    XSetForeground(dpy, gc, COLOR_LINE);
+
+    int prev_x = -1, prev_y = -1;
+    double prev_xval = -1;
+
+    std::map<int, std::pair<double, double>> bin_minmax;
 
     for (std::size_t i = 0; i < g_samples.size(); ++i) {
         double xval = use_index ? (double)i : g_samples[i].time;
@@ -216,28 +232,46 @@ void render_pixmap(Display* dpy, Pixmap pixmap, GC gc, int w, int h,
         int xpix = (int)((xval - xstart) / (xend - xstart) * pw);
         if (xpix < 0 || xpix >= pw) continue;
 
-        int y = py + (int)((r.ymax - val) / (r.ymax - r.ymin) * ph);
-        if (y < py) y = py;
-        if (y >= py + ph) y = py + ph - 1;
-
-        int screen_x = px + xpix;
-        line_points.push_back({(short)screen_x, (short)y});
+        if (bin_minmax.count(xpix) == 0) {
+            bin_minmax[xpix] = {val, val};
+        } else {
+            auto& [minv, maxv] = bin_minmax[xpix];
+            if (val < minv) minv = val;
+            if (val > maxv) maxv = val;
+        }
     }
 
-    // Save current GC attributes
-    XGCValues old_vals;
-    XGetGCValues(dpy, gc, GCLineWidth | GCLineStyle | GCCapStyle | GCJoinStyle, &old_vals);
-    XSetLineAttributes(dpy, gc, g_line_thickness, LineSolid, CapButt, JoinMiter);
+    for (const auto& [xpix, minmax] : bin_minmax) {
+        int screen_x = px + xpix;
 
-    if (g_render_style == PlotRenderStyle::LINES && line_points.size() >= 2) {
-        XDrawLines(dpy, pixmap, gc, line_points.data(), line_points.size(), CoordModeOrigin);
-    } else {
-        for (const auto& pt : line_points) {
-            render_thick_point(dpy, pixmap, gc, pt.x, pt.y, g_line_thickness);
+        double minv = minmax.first;
+        double maxv = minmax.second;
+
+        int y1 = py + (int)((r.ymax - minv) / (r.ymax - r.ymin) * ph);
+        int y2 = py + (int)((r.ymax - maxv) / (r.ymax - r.ymin) * ph);
+        if (y1 < py) y1 = py;
+        if (y1 >= py + ph) y1 = py + ph - 1;
+        if (y2 < py) y2 = py;
+        if (y2 >= py + ph) y2 = py + ph - 1;
+
+        if (g_render_style == PlotRenderStyle::LINES) {
+            XDrawLine(dpy, pixmap, gc, screen_x, y1, screen_x, y2);
+
+            if (prev_x != -1 && std::abs(screen_x - prev_x) >= 1) {
+                XDrawLine(dpy, pixmap, gc, prev_x, prev_y, screen_x, y1);
+            }
+
+            prev_x = screen_x;
+            prev_y = y2;
+        } else {
+            render_thick_point(dpy, pixmap, gc, screen_x, y1, g_line_thickness);
+            if (minv != maxv)
+                render_thick_point(dpy, pixmap, gc, screen_x, y2, g_line_thickness);
         }
     }
 
     // Restore original GC attributes
+    XSetForeground(dpy, gc, COLOR_FG);
     XSetLineAttributes(dpy, gc, old_vals.line_width, old_vals.line_style,
                        old_vals.cap_style, old_vals.join_style);
 
@@ -253,11 +287,12 @@ void render_pixmap(Display* dpy, Pixmap pixmap, GC gc, int w, int h,
     }
 }
 
+
 // Continuation of the plot_buffer and event loop with Toggle Style button support
 
 void plot_buffer(const void* data, std::size_t num_elements, std::size_t elem_bytes,
     bool is_complex, bool is_float, double xstart, double xdelta,
-    const std::string& plot_title, int line_thickness = 1) {
+    const std::string& plot_title, int line_thickness, std::optional<std::pair<double, double>> y_range) {
 
     g_plot_title = plot_title;
     g_line_thickness = line_thickness;
@@ -279,15 +314,10 @@ void plot_buffer(const void* data, std::size_t num_elements, std::size_t elem_by
     XMapWindow(dpy, win);
     GC gc = XCreateGC(dpy, win, 0, nullptr);
 
-    COLOR_BG = WhitePixel(dpy, screen);
-    COLOR_FG = BlackPixel(dpy, screen);
-    COLOR_BOX = 0xFF0000;
-    COLOR_TEXT = 0x003366;
-
     Pixmap pixmap = XCreatePixmap(dpy, win, w, h, DefaultDepth(dpy, screen));
     bool pixmap_dirty = true;
 
-    ZoomRegion view = autoscale_region(g_samples, g_mode);
+    ZoomRegion view = autoscale_region(g_samples, g_mode, y_range);
     int bx0 = -1, by0 = -1, bx1 = -1, by1 = -1;
     bool dragging = false;
     std::string readout;
@@ -348,7 +378,7 @@ void plot_buffer(const void* data, std::size_t num_elements, std::size_t elem_by
                     if (bx0 >= 0 && bx1 >= 0) {
                         int zx = std::min(bx0, bx1), zy = std::min(by0, by1);
                         int zw = std::abs(bx1 - bx0), zh = std::abs(by1 - by0);
-                        XSetForeground(dpy, gc, COLOR_BOX);
+                        XSetForeground(dpy, gc, COLOR_FG);
                         XDrawRectangle(dpy, win, gc, zx, zy, zw, zh);
                     }
 
@@ -442,7 +472,7 @@ void plot_buffer(const void* data, std::size_t num_elements, std::size_t elem_by
             if (bx0 >= 0 && bx1 >= 0) {
                 int zx = std::min(bx0, bx1), zy = std::min(by0, by1);
                 int zw = std::abs(bx1 - bx0), zh = std::abs(by1 - by0);
-                XSetForeground(dpy, gc, COLOR_BOX);
+                XSetForeground(dpy, gc, COLOR_FG);
                 XDrawRectangle(dpy, win, gc, zx, zy, zw, zh);
             }
 
