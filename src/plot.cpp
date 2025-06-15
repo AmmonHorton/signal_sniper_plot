@@ -428,7 +428,7 @@ void plot_buffer(const void* data, std::size_t num_elements, std::size_t elem_by
 
     
     
-    ZoomRegion view = autoscale_region(g_traces[0], g_mode, y_range);
+    ZoomRegion view = autoscale_region(g_traces[0], g_mode, y_range); // TODO fixe the vecotr for which we are scaling by
     std::cout << "Plotting " << g_traces.size() << " traces with mode: " << mode_to_string(g_mode) << "\n";
 
     int bx0 = -1, by0 = -1, bx1 = -1, by1 = -1;
@@ -528,7 +528,7 @@ void plot_buffer(const void* data, std::size_t num_elements, std::size_t elem_by
                                         g_xaxis_mode = (g_xaxis_mode == XAxisMode::TIME) ? XAxisMode::INDEX : XAxisMode::TIME;
                                     }
 
-                                    view = autoscale_region(g_traces[0], g_mode, y_range);  // <-- Recalculate view bounds
+                                    view = autoscale_region(g_traces[0], g_mode, y_range);  // TODO fixe the vecotr for which we are scaling by
                                     while (!g_zoom_stack.empty()) g_zoom_stack.pop();
                                     g_zoom_depth = 0;
                                     pixmap_dirty = true;
@@ -558,7 +558,7 @@ void plot_buffer(const void* data, std::size_t num_elements, std::size_t elem_by
                             by0 = by1 = e.xbutton.y;
                         } else if (e.xbutton.button == Button2) {
                             g_mode = static_cast<PlotMode>((static_cast<int>(g_mode) + 1) % 4);
-                            view = autoscale_region(g_traces[0], g_mode);
+                            view = autoscale_region(g_traces[0], g_mode); // TODO fixe the vecotr for which we are scaling by
                             while (!g_zoom_stack.empty()) g_zoom_stack.pop();
                             g_zoom_depth = 0;
                             pixmap_dirty = true;
