@@ -43,6 +43,7 @@ static PlotRenderStyle g_render_style = PlotRenderStyle::LINES;
 static std::string g_plot_title;
 static std::vector<Button> toolbar_buttons;
 
+
 constexpr unsigned long COLOR_BG = 0x000000; // Black background
 constexpr unsigned long COLOR_FG = 0xFFFFFF; // White foreground
 constexpr unsigned long COLOR_LINE = 0x2CFF05; // Green line color
@@ -102,6 +103,44 @@ static std::string mode_to_string(PlotMode mode) {
         default: return "Unknown";
     }
 }
+
+
+struct DecimatedTrace {
+    std::vector<std::pair<double, double>> y_minmax_per_pixel;
+    ZoomRegion cached_region;
+    PlotMode cached_mode;
+    int cached_width;
+    bool dirty = true;
+
+    void update_if_needed(const std::vector<PlotSample>& samples, PlotMode mode,
+                          const ZoomRegion& view, int pixel_width, bool use_index) {
+        if (!dirty && cached_region.xmin == view.xmin && cached_region.xmax == view.xmax &&
+            cached_mode == mode && cached_width == pixel_width) return;
+
+        y_minmax_per_pixel.assign(pixel_width, {std::numeric_limits<double>::max(), std::numeric_limits<double>::lowest()});
+
+        for (size_t i = 0; i < samples.size(); ++i) {
+            double xval = use_index ? (double)i : samples[i].time;
+            if (xval < view.xmin || xval > view.xmax) continue;
+
+            int bin = (int)((xval - view.xmin) / (view.xmax - view.xmin) * pixel_width);
+            if (bin < 0 || bin >= pixel_width) continue;
+
+            double val = compute_value(samples[i], mode);
+            auto& [minv, maxv] = y_minmax_per_pixel[bin];
+            if (val < minv) minv = val;
+            if (val > maxv) maxv = val;
+        }
+
+        cached_mode = mode;
+        cached_region = view;
+        cached_width = pixel_width;
+        dirty = false;
+    }
+};
+
+static DecimatedTrace g_cached_decimated;
+
 
 static ZoomRegion autoscale_region(const std::vector<PlotSample>& samples, PlotMode mode, std::optional<std::pair<double, double>> y_range = std::nullopt) {
     double tmin, tmax;
@@ -195,6 +234,13 @@ static void render_axes(Display* dpy, Drawable win, GC gc,
     }
 }
 
+void prepare_decimated_trace(const std::vector<PlotSample>& samples, PlotMode mode,
+    const ZoomRegion& view, int pixel_width, bool use_index) {
+    g_cached_decimated.update_if_needed(samples, mode, view, pixel_width, use_index);
+}
+
+// Part 3/3: Optimized render_pixmap()
+
 void render_pixmap(Display* dpy, Pixmap pixmap, GC gc, int w, int h,
                    const ZoomRegion& r, const std::string& title) {
     XSetForeground(dpy, gc, COLOR_BG);
@@ -207,12 +253,14 @@ void render_pixmap(Display* dpy, Pixmap pixmap, GC gc, int w, int h,
     int pw = plot_width;
     int ph = plot_height;
 
+    bool use_index = g_xaxis_mode == XAxisMode::INDEX;
+
     XSetForeground(dpy, gc, COLOR_FG);
     XDrawRectangle(dpy, pixmap, gc, px, py, pw, ph);
 
-    bool use_index = g_xaxis_mode == XAxisMode::INDEX;
-    double xstart = r.xmin;
-    double xend = r.xmax;
+    // Prepare decimated bins
+    prepare_decimated_trace(g_samples, g_mode, r, pw, use_index);
+    const auto& bins = g_cached_decimated.y_minmax_per_pixel;
 
     XGCValues old_vals;
     XGetGCValues(dpy, gc, GCLineWidth | GCLineStyle | GCCapStyle | GCJoinStyle, &old_vals);
@@ -220,39 +268,17 @@ void render_pixmap(Display* dpy, Pixmap pixmap, GC gc, int w, int h,
     XSetForeground(dpy, gc, COLOR_LINE);
 
     int prev_x = -1, prev_y = -1;
-    double prev_xval = -1;
 
-    std::map<int, std::pair<double, double>> bin_minmax;
+    for (int xpix = 0; xpix < (int)bins.size(); ++xpix) {
+        const auto& [minv, maxv] = bins[xpix];
+        if (minv > maxv) continue; // No valid data
 
-    for (std::size_t i = 0; i < g_samples.size(); ++i) {
-        double xval = use_index ? (double)i : g_samples[i].time;
-        if (xval < xstart || xval > xend) continue;
-
-        double val = compute_value(g_samples[i], g_mode);
-        int xpix = (int)((xval - xstart) / (xend - xstart) * pw);
-        if (xpix < 0 || xpix >= pw) continue;
-
-        if (bin_minmax.count(xpix) == 0) {
-            bin_minmax[xpix] = {val, val};
-        } else {
-            auto& [minv, maxv] = bin_minmax[xpix];
-            if (val < minv) minv = val;
-            if (val > maxv) maxv = val;
-        }
-    }
-
-    for (const auto& [xpix, minmax] : bin_minmax) {
         int screen_x = px + xpix;
-
-        double minv = minmax.first;
-        double maxv = minmax.second;
-
         int y1 = py + (int)((r.ymax - minv) / (r.ymax - r.ymin) * ph);
         int y2 = py + (int)((r.ymax - maxv) / (r.ymax - r.ymin) * ph);
-        if (y1 < py) y1 = py;
-        if (y1 >= py + ph) y1 = py + ph - 1;
-        if (y2 < py) y2 = py;
-        if (y2 >= py + ph) y2 = py + ph - 1;
+
+        y1 = std::clamp(y1, py, py + ph - 1);
+        y2 = std::clamp(y2, py, py + ph - 1);
 
         if (g_render_style == PlotRenderStyle::LINES) {
             XDrawLine(dpy, pixmap, gc, screen_x, y1, screen_x, y2);
@@ -270,7 +296,7 @@ void render_pixmap(Display* dpy, Pixmap pixmap, GC gc, int w, int h,
         }
     }
 
-    // Restore original GC attributes
+    // Restore GC
     XSetForeground(dpy, gc, COLOR_FG);
     XSetLineAttributes(dpy, gc, old_vals.line_width, old_vals.line_style,
                        old_vals.cap_style, old_vals.join_style);
@@ -286,6 +312,7 @@ void render_pixmap(Display* dpy, Pixmap pixmap, GC gc, int w, int h,
         xpos += 120;
     }
 }
+
 
 
 // Continuation of the plot_buffer and event loop with Toggle Style button support
