@@ -23,7 +23,7 @@ int main() {
         sizeof(float),
         true,  // not complex
         true,   // is float
-        2524608000.0,  // J1950 start time (2020)
+        100.0,  // J1950 start time (2020)
         0.01,           // xdelta (s)
         "Signal Plot - Frame 37",
         2,

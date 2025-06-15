@@ -35,15 +35,22 @@ struct Button {
     int x, width;
 };
 
+struct LegendItem {
+    int x, y, width, height;
+};
+
 static std::vector<PlotSample> g_samples;
 static std::stack<ZoomRegion> g_zoom_stack;
 static int g_zoom_depth = 0;
 constexpr int MAX_ZOOM_HISTORY = 5;
 
+static std::vector<PlotRenderStyle> g_trace_styles;
+static std::vector<bool> g_trace_visibility;
+static std::vector<LegendItem> g_legend_boxes;
+
 static std::vector<std::vector<PlotSample>> g_traces;
 static PlotMode g_mode = PlotMode::Magnitude;
 static XAxisMode g_xaxis_mode = XAxisMode::TIME;
-static PlotRenderStyle g_render_style = PlotRenderStyle::LINES;
 static std::string g_plot_title;
 static std::vector<Button> toolbar_buttons;
 
@@ -57,6 +64,7 @@ constexpr double RIGHT_MARGIN = 0.03;
 constexpr double TOP_MARGIN = 0.10;
 constexpr double BOTTOM_MARGIN = 0.15;
 constexpr int TOOLBAR_HEIGHT = 30;
+constexpr int LEGEND_HEIGHT = 16;
 
 static int g_line_thickness = 1;
 
@@ -206,9 +214,7 @@ static void render_axes(Display* dpy, Drawable win, GC gc,
     const int ticks = 5;
 
     for (int i = 0; i <= ticks; ++i) {
-        double val = use_index
-            ? i * (num_samples - 1) / (double)ticks
-            : r.xmin + i * (r.xmax - r.xmin) / ticks;
+        double val = r.xmin + i * (r.xmax - r.xmin) / ticks;
 
         int x = px + i * pw / ticks;
         XDrawLine(dpy, win, gc, x, py + ph, x, py + ph + 5);
@@ -259,7 +265,7 @@ void render_pixmap(Display* dpy, Pixmap pixmap, GC gc, int w, int h,
     int plot_width = w * 0.9;
     int plot_height = h * 0.72;
     int px = (w - plot_width) / 2;
-    int py = (h - plot_height - TOOLBAR_HEIGHT - 30) / 2;
+    int py = (h - plot_height - TOOLBAR_HEIGHT - LEGEND_HEIGHT - 10) / 2;
     int pw = plot_width;
     int ph = plot_height;
 
@@ -277,6 +283,7 @@ void render_pixmap(Display* dpy, Pixmap pixmap, GC gc, int w, int h,
 
     // Draw all traces
     for (std::size_t t = 0; t < g_traces.size(); ++t) {
+        if (!g_trace_visibility[t]) continue;
         if (t >= g_cached_decimated_traces.size()) continue;
         const auto& bins = g_cached_decimated_traces[t].y_minmax_per_pixel;
         if (bins.empty()) continue;
@@ -294,7 +301,7 @@ void render_pixmap(Display* dpy, Pixmap pixmap, GC gc, int w, int h,
             y1 = std::clamp(y1, py, py + ph - 1);
             y2 = std::clamp(y2, py, py + ph - 1);
 
-            if (g_render_style == PlotRenderStyle::LINES) {
+            if (g_trace_styles[t] == PlotRenderStyle::LINES) {
                 XDrawLine(dpy, pixmap, gc, screen_x, y1, screen_x, y2);
                 if (prev_x != -1 && std::abs(screen_x - prev_x) >= 1) {
                     XDrawLine(dpy, pixmap, gc, prev_x, prev_y, screen_x, y1);
@@ -322,15 +329,32 @@ void render_pixmap(Display* dpy, Pixmap pixmap, GC gc, int w, int h,
     // Plot title
     draw_text(dpy, pixmap, gc, w / 2 - (title.length() * 3), py - 10, title);
 
-    // Legend (moved lower to avoid axis label conflict)
-    int legend_x = px + 10;
-    int legend_y = py + ph + 30;  // increased from +10 to +30
+
+    g_legend_boxes.clear();  // Reset each frame
+
+    int legend_start_x = px + 10;
+    int legend_y = h - TOOLBAR_HEIGHT - LEGEND_HEIGHT - 30;
+    int box_height = 14;
+    int box_width = 12;
+    int spacing_x = 100;
+
     for (std::size_t t = 0; t < g_traces.size(); ++t) {
-        XSetForeground(dpy, gc, trace_colors[t % trace_colors.size()]);
-        XFillRectangle(dpy, pixmap, gc, legend_x, legend_y + 20 * t, 12, 12);
+        int lx = legend_start_x + t * spacing_x;
+
+        // Dim if hidden
+        if (!g_trace_visibility[t]) {
+            XSetForeground(dpy, gc, 0x404040);  // dark gray
+        } else {
+            XSetForeground(dpy, gc, trace_colors[t % trace_colors.size()]);
+        }
+
+        XFillRectangle(dpy, pixmap, gc, lx, legend_y, box_width, box_height);
+
         XSetForeground(dpy, gc, COLOR_FG);
         std::string label = "Trace " + std::to_string(t);
-        draw_text(dpy, pixmap, gc, legend_x + 18, legend_y + 20 * t + 10, label);
+        draw_text(dpy, pixmap, gc, lx + box_width + 6, legend_y + 10, label);
+
+        g_legend_boxes.push_back({lx, legend_y, spacing_x, box_height});
     }
 
     // Toolbar
@@ -357,6 +381,12 @@ void plot_buffer(const void* data, std::size_t num_elements, std::size_t elem_by
     g_plot_title = plot_title;
     g_line_thickness = line_thickness;
     g_traces.clear();
+
+    g_trace_styles.clear();
+    g_trace_styles.resize(num_traces, PlotRenderStyle::LINES);
+    
+    g_trace_visibility.clear();
+    g_trace_visibility.resize(num_traces, true);
 
     if (num_traces == 0) return;
     std::size_t trace_len = num_elements / num_traces;
@@ -409,8 +439,7 @@ void plot_buffer(const void* data, std::size_t num_elements, std::size_t elem_by
         {"Save PNG", 0, 100},
         {"Cycle Mode", 0, 100},
         {"Reset Zoom", 0, 100},
-        {"Cycle X-Axis", 0, 120},
-        {"Toggle Style", 0, 120} // new button
+        {"Cycle X-Axis", 0, 120}
     };
 
 
@@ -433,18 +462,29 @@ void plot_buffer(const void* data, std::size_t num_elements, std::size_t elem_by
                     int mx = e.xmotion.x;
                     int my = e.xmotion.y;
 
-                    double t = (g_xaxis_mode == XAxisMode::TIME)
-                        ? view.xmin + (mx - w * LEFT_MARGIN) / (w * (1 - LEFT_MARGIN - RIGHT_MARGIN)) * (view.xmax - view.xmin)
-                        : (mx - w * LEFT_MARGIN) / (w * (1 - LEFT_MARGIN - RIGHT_MARGIN)) * (g_samples.size() - 1);
+                    int plot_width = w * 0.9;
+                    int plot_height = h * 0.72;
+                    int px = (w - plot_width) / 2;
+                    int py = (h - plot_height - TOOLBAR_HEIGHT - LEGEND_HEIGHT - 10) / 2;
+                    int pw = plot_width;
+                    int ph = plot_height;
 
-                    double v = view.ymax - (my - h * TOP_MARGIN) / (h * (1 - TOP_MARGIN - BOTTOM_MARGIN)) * (view.ymax - view.ymin);
+                    // Clamp mouse position to plot box
+                    int rel_x = std::clamp(mx - px, 0, pw - 1);
+                    int rel_y = std::clamp(my - py, 0, ph - 1);
+
+                    // Use exact screen-to-data conversion
+                    double t = view.xmin + (rel_x / (double)pw) * (view.xmax - view.xmin);
+                    double v = view.ymax - (rel_y / (double)ph) * (view.ymax - view.ymin);
 
                     std::ostringstream ss;
                     ss.precision(2);
                     if (g_xaxis_mode == XAxisMode::TIME)
                         ss << "Time: " << t;
-                    else
-                        ss << "Index: " << (int)t;
+                    else {
+                        int display_idx = std::clamp(static_cast<int>(std::round(t)), 0, static_cast<int>(g_traces[0].size()) - 1);
+                        ss << "Index: " << display_idx;
+                    }
                     ss << "  Value: " << v;
                     readout = ss.str();
 
@@ -471,60 +511,64 @@ void plot_buffer(const void* data, std::size_t num_elements, std::size_t elem_by
                 }
 
                 case ButtonPress:
-                    if (e.xbutton.y >= h - TOOLBAR_HEIGHT) {
+                    if (e.xbutton.y >= h - TOOLBAR_HEIGHT - 10) {
                         for (auto& b : toolbar_buttons) {
                             if (e.xbutton.x >= b.x && e.xbutton.x <= b.x + b.width) {
                                 if (b.label == "Save PNG") {
                                     save_pixmap_to_ppm(dpy, pixmap, w, h, "plot_out.ppm");
-                                } else if (b.label == "Cycle Mode") {
-                                    g_mode = static_cast<PlotMode>((static_cast<int>(g_mode) + 1) % 4);
-
+                                } else {
                                     auto y_range_tmp = y_range;
-                                    if (g_mode == PlotMode::Phase) {
-                                        y_range_tmp = std::make_pair(-M_PI, M_PI);
+                                    if (b.label == "Cycle Mode") {
+                                        g_mode = static_cast<PlotMode>((static_cast<int>(g_mode) + 1) % 4);
+                                        if (g_mode == PlotMode::Phase) y_range_tmp = std::make_pair(-M_PI, M_PI);
+                                    } else if (b.label == "Reset Zoom") {
+                                        // Placeholder until we figure out a way to not reset zoom on all toolbar changes
+                                        // Likely means isolating our auto scale to x and y axis, 
+                                    } else if (b.label == "Cycle X-Axis") {
+                                        g_xaxis_mode = (g_xaxis_mode == XAxisMode::TIME) ? XAxisMode::INDEX : XAxisMode::TIME;
                                     }
 
-                                    view = autoscale_region(g_traces[0], g_mode, y_range_tmp);
-                                    while (!g_zoom_stack.empty()) g_zoom_stack.pop();
-                                    g_zoom_depth = 0;
-                                    pixmap_dirty = true;
-                                } else if (b.label == "Reset Zoom") {
-                                    view = autoscale_region(g_traces[0], g_mode, y_range);
-                                    while (!g_zoom_stack.empty()) g_zoom_stack.pop();
-                                    g_zoom_depth = 0;
-                                    pixmap_dirty = true;
-                                } else if (b.label == "Cycle X-Axis") {
-                                    g_xaxis_mode = (g_xaxis_mode == XAxisMode::TIME)
-                                        ? XAxisMode::INDEX
-                                        : XAxisMode::TIME;
                                     view = autoscale_region(g_traces[0], g_mode, y_range);  // <-- Recalculate view bounds
                                     while (!g_zoom_stack.empty()) g_zoom_stack.pop();
                                     g_zoom_depth = 0;
                                     pixmap_dirty = true;
-                                } else if (b.label == "Toggle Style") {
-                                    g_render_style = (g_render_style == PlotRenderStyle::LINES)
-                                        ? PlotRenderStyle::DOTS
-                                        : PlotRenderStyle::LINES;
-                                    pixmap_dirty = true;
                                 }
                             }
                         }
-                    } else if (e.xbutton.button == Button1) {
-                        dragging = true;
-                        bx0 = bx1 = e.xbutton.x;
-                        by0 = by1 = e.xbutton.y;
-                    } else if (e.xbutton.button == Button2) {
-                        g_mode = static_cast<PlotMode>((static_cast<int>(g_mode) + 1) % 4);
-                        view = autoscale_region(g_traces[0], g_mode);
-                        while (!g_zoom_stack.empty()) g_zoom_stack.pop();
-                        g_zoom_depth = 0;
-                        pixmap_dirty = true;
-                    } else if (e.xbutton.button == Button3) {
-                        if (!g_zoom_stack.empty()) {
-                            view = g_zoom_stack.top();
-                            g_zoom_stack.pop();
-                            g_zoom_depth--;
+                    } else if (e.xbutton.y >= h - TOOLBAR_HEIGHT - LEGEND_HEIGHT - 30) {
+                        for (std::size_t t = 0; t < g_legend_boxes.size(); ++t) {
+                            const auto& box = g_legend_boxes[t];
+                            if (e.xbutton.y >= box.y && e.xbutton.y <= box.y + box.height &&
+                                e.xbutton.x >= box.x && e.xbutton.x <= box.x + box.width) {
+    
+                                if (e.xbutton.button == Button1) {
+                                    g_trace_visibility[t] = !g_trace_visibility[t];
+                                } else if (e.xbutton.button == Button3) {
+                                    g_trace_styles[t] = (g_trace_styles[t] == PlotRenderStyle::LINES)
+                                        ? PlotRenderStyle::DOTS
+                                        : PlotRenderStyle::LINES;
+                                }
+                                pixmap_dirty = true;
+                            }
+                        }
+                    } else {
+                        if (e.xbutton.button == Button1) {
+                            dragging = true;
+                            bx0 = bx1 = e.xbutton.x;
+                            by0 = by1 = e.xbutton.y;
+                        } else if (e.xbutton.button == Button2) {
+                            g_mode = static_cast<PlotMode>((static_cast<int>(g_mode) + 1) % 4);
+                            view = autoscale_region(g_traces[0], g_mode);
+                            while (!g_zoom_stack.empty()) g_zoom_stack.pop();
+                            g_zoom_depth = 0;
                             pixmap_dirty = true;
+                        } else if (e.xbutton.button == Button3) {
+                            if (!g_zoom_stack.empty()) {
+                                view = g_zoom_stack.top();
+                                g_zoom_stack.pop();
+                                g_zoom_depth--;
+                                pixmap_dirty = true;
+                            }
                         }
                     }
                     break;
