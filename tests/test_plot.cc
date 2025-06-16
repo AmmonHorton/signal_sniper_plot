@@ -1,9 +1,10 @@
-#include "plot.hpp"
+#include <gtest/gtest.h>
 #include <vector>
 #include <cmath>
 #include <complex>
+#include "plot.h"
 
-int main() {
+TEST(Plot, two_sinusoids) {
     constexpr size_t N = 1e4;
     std::vector<std::complex<float>> signal;
     for (size_t i = 0; i < N; ++i) {
@@ -30,6 +31,4 @@ int main() {
         std::make_optional<std::pair<double, double>>({-5, 5}),
         2
     );
-    
-    return 0;
 }

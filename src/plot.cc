@@ -1,4 +1,4 @@
-#include "plot.hpp"
+#include "plot.h"
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <vector>
