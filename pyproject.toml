@@ -34,7 +34,7 @@ dev = [
 ]
 
 [tool.scikit-build]
-module = "signal_sniper_plot_py"
+# module = "signal_sniper_plot_py"
 build-dir = "build"
 
 [tool.scikit-build.cmake]
