@@ -38,10 +38,9 @@ module = "signal_sniper_plot_py"
 build-dir = "build"
 
 [tool.scikit-build.cmake]
-version = "3.16"
+version = ">=3.16"
 args = [
-    "-DENABLE_PYBIND=ON",
-    "-DENABLE_PYTHON_INSTALL=ON"
+    "-DENABLE_PYBIND=ON"
 ]
 
 [tool.scikit-build.editable]
