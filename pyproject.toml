@@ -33,18 +33,19 @@ dev = [
     "pytest-cov"
 ]
 
-[tool.scikit-build]
-wheel.packages = []  # No pure Python package directories
-module = "signal_sniper_plot_py"  # Name of pybind11 module built by CMake
+[tool.scikit-build.build]
+module = "signal_sniper_plot_py"
 build-dir = "build"
-cmake.minimum-version = "3.16"
-cmake.args = [
+
+[tool.scikit-build.cmake]
+version = "3.16"
+args = [
     "-DENABLE_PYBIND=ON",
     "-DENABLE_PYTHON_INSTALL=ON"
 ]
 
 [tool.scikit-build.editable]
-mode = "redirect"  # So `pip install -e .` works
+mode = "redirect"
 
 [tool.scikit-build.sdist]
 include = [
