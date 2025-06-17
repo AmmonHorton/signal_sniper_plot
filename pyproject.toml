@@ -33,9 +33,6 @@ dev = [
     "pytest-cov"
 ]
 
-[tool.cibuildwheel]
-package-data = ["build/*.so"]
-
 [tool.scikit-build]
 build-dir = "build"
 build.targets = ["signal_sniper_plot_py", "signal_sniper_plot"]
