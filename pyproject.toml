@@ -33,14 +33,15 @@ dev = [
     "pytest-cov"
 ]
 
-[tool.scikit-build.build]
-module = "signal_sniper_plot_py"
+[tool.scikit-build]
 build-dir = "build"
+wheel.module = "signal_sniper_plot_py"
 
 [tool.scikit-build.cmake]
 version = ">=3.16"
 args = [
-    "-DENABLE_PYBIND=ON"
+    "-DENABLE_PYBIND=ON",
+    "-DENABLE_PYTHON_INSTALL=ON"
 ]
 
 [tool.scikit-build.editable]
