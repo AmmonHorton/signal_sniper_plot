@@ -33,6 +33,9 @@ dev = [
     "pytest-cov"
 ]
 
+[tool.cibuildwheel]
+build-verbosity = 2
+
 [tool.scikit-build]
 build-dir = "build"
 build.targets = ["signal_sniper_plot_py", "signal_sniper_plot"]
