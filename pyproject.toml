@@ -56,8 +56,3 @@ include = [
     "README.md",
     "LICENSE"
 ]
-
-[tool.scikit-build.metadata]
-system-requires = [
-    "libx11-dev"
-]
