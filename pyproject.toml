@@ -8,7 +8,7 @@ requires = [
 build-backend = "scikit_build_core.build"
 
 [project]
-name = "signal_sniper_plot"
+name = "signal_sniper_plot_py"
 version = "0.1.0"
 description = "A C++ plotting library with a pybind11 Python wrapper"
 authors = [
@@ -33,9 +33,12 @@ dev = [
     "pytest-cov"
 ]
 
+[tool.cibuildwheel]
+package-data = ["build/*.so"]
+
 [tool.scikit-build]
-# module = "signal_sniper_plot_py"
 build-dir = "build"
+build.targets = ["signal_sniper_plot_py", "signal_sniper_plot"]
 
 [tool.scikit-build.cmake]
 version = ">=3.16"
