@@ -34,8 +34,8 @@ dev = [
 ]
 
 [tool.scikit-build]
+module = "signal_sniper_plot_py"
 build-dir = "build"
-wheel.module = "signal_sniper_plot_py"
 
 [tool.scikit-build.cmake]
 version = ">=3.16"
@@ -46,6 +46,7 @@ args = [
 
 [tool.scikit-build.editable]
 mode = "redirect"
+
 
 [tool.scikit-build.sdist]
 include = [
