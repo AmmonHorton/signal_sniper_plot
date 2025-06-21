@@ -21,8 +21,8 @@ TEST(Plot, two_sinusoids) {
     xplot::plot_buffer(
         signal.data(),
         signal.size(),
-        sizeof(float),
-        true,  // not complex
+        2*sizeof(float),
+        true,  // is complex
         true,   // is float
         100.0,  // J1950 start time (2020)
         0.01,           // xdelta (s)

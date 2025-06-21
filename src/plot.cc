@@ -74,25 +74,54 @@ void render_thick_point(Display* dpy, Drawable drawable, GC gc, int x, int y, in
 }
 
 static std::vector<PlotSample> process_buffer(
-    const void* data, std::size_t num_elements, std::size_t element_size_bytes,
-    bool is_complex, bool is_float, double xstart, double xdelta
+    const void* data,
+    std::size_t num_elements,
+    std::size_t element_size_bytes,
+    bool is_complex,
+    bool is_float,
+    double xstart,
+    double xdelta
 ) {
-    std::vector<PlotSample> samples;
+    std::vector<PlotSample> samples(num_elements);
+
     if (is_float) {
-        const float* fdata = static_cast<const float*>(data);
-        for (std::size_t i = 0; i < num_elements; ++i) {
-            float re = fdata[is_complex ? 2*i : i];
-            float im = is_complex ? fdata[2*i + 1] : 0;
-            samples.push_back({xstart + i * xdelta, re, im});
+        if (element_size_bytes == 4 || (is_complex && element_size_bytes == 8)) {
+            const float* fdata = reinterpret_cast<const float*>(data);
+            for (std::size_t i = 0; i < num_elements; ++i) {
+                float re = fdata[is_complex ? 2 * i : i];
+                float im = is_complex ? fdata[2 * i + 1] : 0.0f;
+                samples[i] = {xstart + i * xdelta, re, im};
+            }
+        } else if (element_size_bytes == 8 || (is_complex && element_size_bytes == 16)) {
+            const double* ddata = reinterpret_cast<const double*>(data);
+            for (std::size_t i = 0; i < num_elements; ++i) {
+                float re = static_cast<float>(ddata[is_complex ? 2 * i : i]);
+                float im = is_complex ? static_cast<float>(ddata[2 * i + 1]) : 0.0f;
+                samples[i] = {xstart + i * xdelta, re, im};
+            }
+        } else {
+            throw std::runtime_error("Unsupported float element size: " + std::to_string(element_size_bytes));
         }
     } else {
-        const short* idata = static_cast<const short*>(data);
-        for (std::size_t i = 0; i < num_elements; ++i) {
-            float re = idata[is_complex ? 2*i : i];
-            float im = is_complex ? idata[2*i + 1] : 0;
-            samples.push_back({xstart + i * xdelta, re, im});
+        if (element_size_bytes == 2 || (is_complex && element_size_bytes == 4)) {
+            const int16_t* sdata = reinterpret_cast<const int16_t*>(data);
+            for (std::size_t i = 0; i < num_elements; ++i) {
+                float re = static_cast<float>(sdata[is_complex ? 2 * i : i]);
+                float im = is_complex ? static_cast<float>(sdata[2 * i + 1]) : 0.0f;
+                samples[i] = {xstart + i * xdelta, re, im};
+            }
+        } else if (element_size_bytes == 4 || (is_complex && element_size_bytes == 8)) {
+            const int32_t* idata = reinterpret_cast<const int32_t*>(data);
+            for (std::size_t i = 0; i < num_elements; ++i) {
+                float re = static_cast<float>(idata[is_complex ? 2 * i : i]);
+                float im = is_complex ? static_cast<float>(idata[2 * i + 1]) : 0.0f;
+                samples[i] = {xstart + i * xdelta, re, im};
+            }
+        } else {
+            throw std::runtime_error("Unsupported int element size: " + std::to_string(element_size_bytes));
         }
     }
+
     return samples;
 }
 
@@ -394,9 +423,8 @@ void plot_buffer(const void* data, std::size_t num_elements, std::size_t elem_by
     const char* base = static_cast<const char*>(data);
     trace_len = std::min(trace_len, num_elements);  // Clamp to avoid overrun
     
-    int elem_bytes_complex = is_complex ? 2 * elem_bytes : elem_bytes;
     for (std::size_t t = 0; t < num_traces; ++t) {
-        const void* trace_ptr = base + t * trace_len * elem_bytes_complex;
+        const void* trace_ptr = base + t * trace_len * elem_bytes;
         auto samples = process_buffer(trace_ptr, trace_len, elem_bytes, is_complex, is_float, xstart, xdelta);
         if (!samples.empty()) {
             g_traces.push_back(std::move(samples));

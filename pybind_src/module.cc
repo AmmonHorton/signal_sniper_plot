@@ -38,10 +38,6 @@ PYBIND11_MODULE(signal_sniper_plot_py, m) {
         bool is_complex = is_numpy_complex(dtype);
         bool is_float = is_numpy_float(dtype) || is_complex;
 
-        if (is_complex) {
-            elem_bytes /= 2;
-        }
-
         xplot::plot_buffer(info.ptr,
                            num_elements,
                            elem_bytes,
