@@ -34,6 +34,7 @@ std::string mode_to_string(PlotMode mode) {
         case PlotMode::Real: return "Real";
         case PlotMode::Imag: return "Imag";
         case PlotMode::Phase: return "Phase";
+        case PlotMode::IQ: return "I/Q";
         default: return "Unknown";
     }
 }
@@ -81,8 +82,21 @@ ZoomRegion PlotSession::autoscale_region(const std::vector<PlotSample>& samples)
         xmin = fixed_x_range_->first;
         xmax = fixed_x_range_->second;
     } else {
-        xmin = samples.front().time;
-        xmax = samples.back().time;
+        if (mode_ == PlotMode::IQ){
+            for (const auto& s : samples) {
+                xmin = std::min(xmin, s.real);
+                xmax = std::max(xmax, s.real);
+            }
+            if (xmax - xmin == 0) {
+                xmin -= 1.0; xmax += 1.0;
+            } else {
+                xmin -= 0.05 * (xmax - xmin);
+                xmax += 0.05 * (xmax - xmin);
+            }
+        } else {
+            xmin = samples.front().time;
+            xmax = samples.back().time;
+        }
     }
 
     double ymin = compute_value(samples.front(), mode_);
@@ -92,10 +106,17 @@ ZoomRegion PlotSession::autoscale_region(const std::vector<PlotSample>& samples)
         ymin = fixed_y_range_->first;
         ymax = fixed_y_range_->second;
     } else {
-        for (const auto& s : samples) {
-            double v = compute_value(s, mode_);
-            ymin = std::min(ymin, v);
-            ymax = std::max(ymax, v);
+        if (mode_ == PlotMode::IQ){
+            for (const auto& s : samples) {
+                ymin = std::min(ymin, s.imag);
+                ymax = std::max(ymax, s.imag);
+            }
+        } else {
+            for (const auto& s : samples) {
+                double v = compute_value(s, mode_);
+                ymin = std::min(ymin, v);
+                ymax = std::max(ymax, v);
+            }
         }
         if (ymax - ymin == 0) {
             ymin -= 1.0; ymax += 1.0;
@@ -177,9 +198,12 @@ void PlotSession::draw_toolbar() {
     int tool_y = height_ - TOOLBAR_HEIGHT, xpos = 20;
     toolbar_buttons_ = {
         {"Save PNG", 0, 100},
-        {"Cycle Mode", 0, 100},
-        {"Reset Zoom", 0, 100},
-        {"Cycle X-Axis", 0, 120}
+        {"Cycle X-Axis", 0, 120},
+        {"Magnitude", 0, 100},
+        {"Real", 0, 100},
+        {"Imag", 0, 100},
+        {"Phase", 0, 100},
+        {"Imag vs Real", 0, 120}
     };
 
     for (auto& b : toolbar_buttons_) {
@@ -231,6 +255,34 @@ void PlotSession::render_pixmap() {
     int py = height_ * TOP_MARGIN;
 
     plot_height -= (TOOLBAR_HEIGHT + VERTICAL_PADDING + LEGEND_HEIGHT);
+
+    if (mode_ == PlotMode::IQ) {
+        // Draw axes (optional: add ticks/labels)
+        XSetForeground(dpy_, gc_, COLOR_FG);
+        XDrawLine(dpy_, pixmap_, gc_, px, py + plot_height / 2, px + plot_width, py + plot_height / 2); // x-axis
+        XDrawLine(dpy_, pixmap_, gc_, px + plot_width / 2, py, px + plot_width / 2, py + plot_height); // y-axis
+
+        // Draw traces as points in I/Q plane
+        for (size_t t = 0; t < traces_.size(); ++t) {
+            const auto& trace = traces_[t];
+            XSetForeground(dpy_, gc_, trace_colors[t % trace_colors.size()]);
+            for (const auto& s : trace.samples) {
+                // Map real/imag to pixel coordinates
+                int x = px + static_cast<int>(
+                    (s.real - current_view_.xmin) / (current_view_.xmax - current_view_.xmin) * plot_width
+                );
+                int y = py + static_cast<int>(
+                    (current_view_.ymax - s.imag) / (current_view_.ymax - current_view_.ymin) * plot_height
+                );
+                XFillArc(dpy_, pixmap_, gc_, x - line_thickness_, y - line_thickness_,
+                         2 * line_thickness_, 2 * line_thickness_, 0, 360 * 64);
+            }
+        }
+        // Optionally: draw legend, toolbar, etc.
+        draw_legend();
+        draw_toolbar();
+        return;
+    }
 
     if (decimated_cache_.size() != traces_.size()) {
         decimated_cache_.resize(traces_.size());
@@ -334,6 +386,12 @@ void PlotSession::draw_axes() {
     }
 }
 
+void PlotSession::reset_zoom() {
+    while (!zoom_stack_.empty()) zoom_stack_.pop();
+    zoom_depth_ = 0;
+    current_view_ = autoscale_region(traces_[0].samples);
+}
+
 void PlotSession::run() {
     if (traces_.empty()) return;
 
@@ -363,14 +421,23 @@ void PlotSession::run() {
                         if (x >= b.x && x <= b.x + b.width) {
                             if (b.label == "Save PNG") {
                                 save_pixmap_to_ppm("plot_out.ppm");
-                            } else if (b.label == "Cycle Mode") {
-                                mode_ = static_cast<PlotMode>((static_cast<int>(mode_) + 1) % 4);
+                            } else if (b.label == "Magnitude") {
+                                if (mode_ == PlotMode::IQ) reset_zoom();
+                                mode_ = PlotMode::Magnitude;
+                            } else if (b.label == "Imag") {
+                                if (mode_ == PlotMode::IQ) reset_zoom();
+                                mode_ = PlotMode::Real;
+                            } else if (b.label == "Real") {
+                                if (mode_ == PlotMode::IQ) reset_zoom();
+                                mode_ = PlotMode::Imag;
+                            } else if (b.label == "Phase") {
+                                if (mode_ == PlotMode::IQ) reset_zoom();
+                                mode_ = PlotMode::Phase;
+                            } else if (b.label == "Imag vs Real") {
+                                if (mode_ != PlotMode::IQ) reset_zoom();
+                                mode_ = PlotMode::IQ;
                             } else if (b.label == "Cycle X-Axis") {
                                 xaxis_mode_ = (xaxis_mode_ == XAxisMode::TIME) ? XAxisMode::INDEX : XAxisMode::TIME;
-                            } else if (b.label == "Reset Zoom") {
-                                while (!zoom_stack_.empty()) zoom_stack_.pop();
-                                zoom_depth_ = 0;
-                                current_view_ = autoscale_region(traces_[0].samples);
                             }
                             pixmap_dirty_ = true;
                         }

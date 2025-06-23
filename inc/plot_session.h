@@ -11,7 +11,7 @@
 
 namespace xplot {
 
-enum class PlotMode { Magnitude, Real, Imag, Phase };
+enum class PlotMode { Magnitude, Real, Imag, Phase, IQ };
 enum class XAxisMode { TIME, INDEX };
 
 struct ZoomRegion {
@@ -51,11 +51,12 @@ public:
     void set_zoom_range(ZoomRegion zr);
     void set_fixed_y_range(std::optional<std::pair<double, double>> ylimits);
     void set_fixed_x_range(std::optional<std::pair<double, double>> xlimits); // <-- add this
-
+    
     void run();         // Interactive event loop
     void render_once(); // For headless or pre-rendered output
-
+    
 private:
+    void reset_zoom();
     void init_x11();
     void handle_events();
     void render_pixmap();
