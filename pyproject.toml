@@ -9,13 +9,14 @@ build-backend = "scikit_build_core.build"
 
 
 [tool.cibuildwheel]
-# Only build Linux wheels on x86_64
-build = ["cp38-manylinux_x86_64","cp39-manylinux_x86_64","cp310-manylinux_x86_64", "cp311-manylinux_x86_64"]
+archs = ["auto64"]
+skip = ["pp37-*", "*-musllinux_*"]
+before-all = "yum install -y libX11-devel"
 
 
 [project]
 name = "signal_sniper_plot_py"
-version = "0.1.0"
+version = "1.0.0"
 description = "A C++ plotting library with a pybind11 Python wrapper"
 authors = [
     { name = "Ammon Horton", email = "aj_horton@hotmail.com" }
