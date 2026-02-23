@@ -1,4 +1,4 @@
-name: Build wheels
+name: Build and publish wheel
 
 on:
   push:
@@ -6,39 +6,48 @@ on:
       - "v*"
 
 jobs:
-  build_wheels:
+  build_and_publish:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.12"]
 
     steps:
-    - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: 3.12
+      # X11 headers and shared library required at build time.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev
 
-    - name: Install cibuildwheel
-      run: pip install cibuildwheel
+      # Bazelisk reads .bazeliskrc and downloads the pinned Bazel version.
+      - name: Install Bazelisk
+        run: |
+          sudo apt-get install -y curl
+          sudo curl -fsSL -o /usr/local/bin/bazel \
+            https://github.com/bazelbuild/bazelisk/releases/latest/download/bazelisk-linux-amd64
+          sudo chmod +x /usr/local/bin/bazel
 
-    - name: Build wheels
-      env:
-        CIBW_BEFORE_BUILD_LINUX: yum install -y libX11-devel
-        CIBW_LOG_LEVEL: DEBUG
-      run: |
-        cibuildwheel --output-dir dist
-    
-    - name: Check wheels
-      run: |
-        pip install twine
-        twine check dist/*
+      # Build the wheel. The output is a linux_x86_64 wheel; auditwheel will
+      # repair it in the next step.
+      - name: Build wheel
+        run: bazel build //:signal_sniper_plot_wheel
 
-    - name: Upload to PyPI
-      env:
-        TWINE_USERNAME: __token__
-        TWINE_PASSWORD: ${{ secrets.TEST_PYPI_API_TOKEN }}
-      run: |
-        pip install twine
-        twine upload --verbose --repository testpypi dist/*
+      # auditwheel bundles libsignal_sniper_plot.so into the wheel and
+      # re-tags it with the appropriate manylinux platform string.
+      # libX11 is on the manylinux whitelist and will not be bundled.
+      - name: Repair wheel (auditwheel)
+        run: |
+          pip install auditwheel
+          mkdir -p dist
+          auditwheel repair --wheel-dir dist/ \
+            $(bazel cquery --output=files //:signal_sniper_plot_wheel)
+
+      - name: Check wheel
+        run: |
+          pip install twine
+          twine check dist/*.whl
+
+      - name: Upload to TestPyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.TEST_PYPI_API_TOKEN }}
+        run: twine upload --verbose --repository testpypi dist/*.whl

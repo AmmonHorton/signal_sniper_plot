@@ -1,0 +1,127 @@
+"""Top-level Bazel build targets for signal_sniper_plot."""
+
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("@pybind11_bazel//:build_defs.bzl", "pybind_extension")
+load("@rules_python//python:defs.bzl", "py_binary")
+load("@rules_python//python:packaging.bzl", "py_wheel")
+load("@rules_python//python:pip.bzl", "compile_pip_requirements")
+
+# C++17 is required across all targets.
+# Alternatively, set globally in .bazelrc with: build --cxxopt=-std=c++17
+_COPTS = ["-std=c++17"]
+
+# ── C++ library targets ───────────────────────────────────────────────────────
+
+# Low-level sample/trace types and raw-buffer conversion utilities.
+cc_library(
+    name = "trace_utils",
+    srcs = ["src/trace_utils.cc"],
+    hdrs = ["inc/trace_utils.h"],
+    copts = _COPTS,
+    strip_include_prefix = "inc",
+    visibility = ["//visibility:public"],
+)
+
+# X11 interactive plot session: rendering, event loop, zoom/pan, streaming.
+cc_library(
+    name = "plot_session",
+    srcs = ["src/plot_session.cc"],
+    hdrs = ["inc/plot_session.h"],
+    copts = _COPTS,
+    strip_include_prefix = "inc",
+    deps = [
+        ":trace_utils",
+        "@system_libs//:x11",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# Public C++ API: thin wrappers over PlotSession.
+cc_library(
+    name = "signal_sniper_plot",
+    srcs = ["src/plot.cc"],
+    hdrs = ["inc/plot.h"],
+    copts = _COPTS,
+    strip_include_prefix = "inc",
+    deps = [
+        ":plot_session",
+        ":trace_utils",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# ── Unit tests ────────────────────────────────────────────────────────────────
+# Note: this test opens an X11 window; requires a live display (set DISPLAY).
+
+cc_test(
+    name = "test_signal_sniper_plot",
+    srcs = ["tests/test_plot.cc"],
+    copts = _COPTS,
+    deps = [
+        ":signal_sniper_plot",
+        "@googletest//:gtest_main",
+    ],
+)
+
+# ── Python extension ──────────────────────────────────────────────────────────
+
+# Native Python extension module (.so) built with pybind11.
+pybind_extension(
+    name = "signal_sniper_plot_py",
+    srcs = ["pybind_src/module.cc"],
+    copts = _COPTS,
+    deps = [":signal_sniper_plot"],
+    visibility = ["//visibility:public"],
+)
+
+# ── Python wheel ─────────────────────────────────────────────────────────────
+# Produces a platform wheel (.whl) containing the pybind11 extension.
+# The platform tag is set to linux_x86_64 here; CI runs auditwheel repair
+# afterwards to repackage it with the correct manylinux tag and bundle
+# libsignal_sniper_plot.so alongside the extension.
+#   bazel build //:signal_sniper_plot_wheel
+
+py_wheel(
+    name = "signal_sniper_plot_wheel",
+    distribution = "signal_sniper_plot_py",
+    version = "1.1.0",
+    python_tag = "cp312",
+    abi = "cp312",
+    platform = "linux_x86_64",
+    description_file = "docs/README_pypi.md",
+    summary = "A C++ DSP plotting library with a pybind11 Python wrapper",
+    author = "Ammon Horton",
+    author_email = "aj_horton@hotmail.com",
+    classifiers = [
+        "Programming Language :: Python :: 3",
+        "Programming Language :: C++",
+        "License :: OSI Approved :: MIT License",
+        "Operating System :: POSIX :: Linux",
+    ],
+    python_requires = ">=3.12",
+    deps = [":signal_sniper_plot_py"],
+)
+
+# ── Pip dependency management ─────────────────────────────────────────────────
+# Regenerate requirements_lock.txt from requirements.in:
+#   bazel run //:requirements.update
+
+compile_pip_requirements(
+    name = "requirements",
+    src = "bazel/python_deps/requirements.in",
+    requirements_txt = "bazel/python_deps/requirements_lock.txt",
+    python_version = "3.12",
+)
+
+# ── Python scripts ────────────────────────────────────────────────────────────
+
+# Quick manual demo: bazel run //:test_plot_py
+py_binary(
+    name = "test_plot_py",
+    srcs = ["python/test_plot.py"],
+    main = "python/test_plot.py",
+    deps = [
+        ":signal_sniper_plot_py",
+        "@pip_deps//numpy",
+    ],
+)

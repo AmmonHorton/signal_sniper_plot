@@ -1,0 +1,63 @@
+"""Bazel module definition for signal_sniper_plot.
+
+An interactive X11 DSP plotting library with C++ and Python bindings.
+"""
+
+module(
+    name = "signal_sniper_plot",
+    version = "1.1.0",
+    compatibility_level = 1,
+)
+
+# ── C++ build rules ───────────────────────────────────────────────────────────
+
+bazel_dep(name = "platforms", version = "0.0.10")
+bazel_dep(name = "rules_cc", version = "0.2.16")
+
+# ── Unit testing ──────────────────────────────────────────────────────────────
+
+bazel_dep(name = "googletest", version = "1.17.0.bcr.2")
+
+# ── Python toolchain + pip ────────────────────────────────────────────────────
+
+bazel_dep(name = "rules_python", version = "1.8.3")
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(
+    python_version = "3.12",
+    is_default = True,
+)
+use_repo(python, "python_3_12")
+
+# Third-party pip packages (numpy required by python/test_plot.py).
+# Run `bazel run //:requirements.update` to regenerate the lock file.
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+pip.parse(
+    hub_name      = "pip_deps",
+    python_version = "3.12",
+    requirements_lock = "bazel/python_deps/requirements_lock.txt",
+)
+use_repo(pip, "pip_deps")
+
+# ── Pybind11 ──────────────────────────────────────────────────────────────────
+# Provides the pybind_extension() rule used to build the Python .so module.
+# Verify the version against https://registry.bazel.build before building;
+# use archive_override() below if pybind11_bazel is not yet in the BCR.
+
+bazel_dep(name = "pybind11_bazel", version = "3.0.0")
+
+# ── System X11 library ────────────────────────────────────────────────────────
+# X11 is consumed from the host system rather than downloaded.
+# Assumes a standard Linux layout with headers under /usr/include/X11
+# and the shared library resolvable as -lX11.
+
+_system_libs_repo = use_repo_rule(
+    "@bazel_tools//tools/build_defs/repo:local.bzl",
+    "new_local_repository",
+)
+
+_system_libs_repo(
+    name = "system_libs",
+    path = "/usr",
+    build_file = "//bazel/system_libs:BUILD.bazel",
+)

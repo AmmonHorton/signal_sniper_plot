@@ -1,2 +1,6 @@
 /build/
 /.venv/
+/bazel-bin**
+/bazel-out**
+/bazel-signal_sniper_plot**
+/bazel-testlogs**
