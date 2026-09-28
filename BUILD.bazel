@@ -284,3 +284,14 @@ py_test(
         "@pip_deps//numpy",
     ],
 )
+
+# OFDM acquisition/tracking demo:  bazel run //:ofdm_demo   (or -- --png DIR to save figures)
+py_binary(
+    name = "ofdm_demo",
+    srcs = ["python/ofdm_demo.py"],
+    main = "python/ofdm_demo.py",
+    deps = [
+        ":signal_sniper_plot_py",
+        "@pip_deps//numpy",
+    ],
+)
