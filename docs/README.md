@@ -40,7 +40,7 @@ docs/           This file and DEPENDENCIES.md
 | **Bazelisk** | Bazel version manager; reads `.bazeliskrc` | see below |
 | **libx11-dev** | X11 headers and shared library | `sudo apt install libx11-dev` |
 
-All other dependencies (GoogleTest, pybind11, rules_python, etc.) are fetched automatically by Bazel from the Bazel Central Registry.
+All other dependencies (GoogleTest, pybind11, zlib, rules_python, etc.) are fetched automatically by Bazel from the Bazel Central Registry.
 
 ### Install Bazelisk
 

@@ -1,6 +1,8 @@
 # Dependencies
 
-All build-time dependencies except the two listed below are fetched automatically by Bazel from the Bazel Central Registry on first build. No manual installation of GoogleTest, pybind11, or Python toolchains is required.
+All build-time dependencies except the two listed below are fetched automatically by Bazel from the Bazel Central Registry on first build. No manual installation of GoogleTest, pybind11, zlib, or Python toolchains is required.
+
+At run time the library (and the Python wheel) needs only `libX11` and the C/C++ runtime; everything else is linked statically.
 
 ---
 
@@ -30,6 +32,7 @@ These are declared in `MODULE.bazel` and require no manual action.
 | Dependency | Version | Purpose |
 |---|---|---|
 | `rules_cc` | 0.2.16 | C++ build rules |
+| `zlib` | 1.3.1 | PNG encoding (`save_png`, Ctrl-S). Built from source and linked statically: not needed where the library or wheel is used |
 | `googletest` | 1.17.0 | Unit testing framework |
 | `rules_python` | 1.8.3 | Python 3.12 hermetic toolchain and pip integration |
 | `pybind11_bazel` | 3.0.0 | `pybind_extension()` rule for building the Python `.so` |
