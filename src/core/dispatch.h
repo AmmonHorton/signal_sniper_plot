@@ -29,4 +29,9 @@ decltype(auto) dispatch(DType dt, F&& f) {
     throw std::logic_error("unknown DType");
 }
 
+/// @brief Bytes per element (per real/imag half for complex data).
+inline std::size_t dtype_size(DType dt) {
+    return dispatch(dt, [](auto tag) { return sizeof(typename decltype(tag)::type); });
+}
+
 }  // namespace ssp

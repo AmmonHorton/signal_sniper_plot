@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "app/controller.h"
+#include "render/colormap.h"
 
 namespace ssp {
 namespace {
@@ -96,37 +97,82 @@ std::vector<MenuItem> build_menu(const Screen& s) {
         return toggle(label, "", s.set.phunits == u, [u](Screen& sc) { return action::set_phunits(sc, u); });
     };
     std::vector<MenuItem> traces;
-    for (std::size_t t = 0; t < s.content->size(); ++t) {
-        traces.push_back(toggle(s.content->signal(t).name.c_str(), "", s.content->signal(t).visible,
+    const TraceContent* tc = s.traces();
+    for (std::size_t t = 0; tc && t < tc->size(); ++t) {
+        traces.push_back(toggle(tc->signal(t).name.c_str(), "", tc->signal(t).visible,
                                 [t](Screen& sc) { return action::toggle_trace(sc, t); }));
     }
-    return {
-        {"Mode", "", false, {},
-         {mode("Magnitude", "1", CMode::Mag), mode("Phase", "2", CMode::Phase),
-          mode("Real", "3", CMode::Real), mode("Imaginary", "4", CMode::Imag),
-          mode("10*log10", "6", CMode::Log10), mode("20*log10", "7", CMode::Log20)}},
+    const bool raster = s.content->is_raster();
+    std::vector<MenuItem> modes = {mode("Magnitude", "1", CMode::Mag), mode("Phase", "2", CMode::Phase),
+                                   mode("Real", "3", CMode::Real), mode("Imaginary", "4", CMode::Imag)};
+    if (!raster) modes.push_back(mode("Imag vs Real", "5", CMode::IR));
+    modes.push_back(mode("10*log10", "6", CMode::Log10));
+    modes.push_back(mode("20*log10", "7", CMode::Log20));
+
+    std::vector<MenuItem> scaling = {
+        toggle("X range...", "", false, [](Screen& sc) { return action::open_prompt(sc, PromptState::Kind::XRange); }),
+        toggle("Y range...", "", false, [](Screen& sc) { return action::open_prompt(sc, PromptState::Kind::YRange); }),
+    };
+    if (raster) {
+        scaling.push_back(toggle("Z range...", "", false,
+                                 [](Screen& sc) { return action::open_prompt(sc, PromptState::Kind::ZRange); }));
+        scaling.push_back(toggle("Autoscale Z", "", !s.set.zfixed, [](Screen& sc) {
+            sc.set.zfixed.reset();
+            return unsigned{kRepaint};
+        }));
+    } else {
+        scaling.push_back(toggle("Autoscale Y", "", false, action::autoscale_y));
+    }
+    scaling.push_back(toggle("Unzoom all", "Home", false, action::unzoom_all));
+
+    std::vector<MenuItem> items = {
+        {"Mode", "", false, {}, modes},
         {"Phase units", "", false, {},
          {units("Radians", PhaseUnits::Radians), units("Degrees", PhaseUnits::Degrees),
           units("Cycles", PhaseUnits::Cycles)}},
-        {"Scaling", "", false, {},
-         {toggle("X range...", "", false,
-                 [](Screen& sc) { return action::open_prompt(sc, PromptState::Kind::XRange); }),
-          toggle("Y range...", "", false,
-                 [](Screen& sc) { return action::open_prompt(sc, PromptState::Kind::YRange); }),
-          toggle("Autoscale Y", "", false, action::autoscale_y),
-          toggle("Unzoom all", "Home", false, action::unzoom_all)}},
-        {"Traces", "", false, {}, traces},
-        {},
-        toggle("Grid", "g", s.set.grid, [](Screen& sc) { sc.set.grid = !sc.set.grid; return unsigned{kRepaint}; }),
-        toggle("Legend", "l", s.set.legend,
-               [](Screen& sc) { sc.set.legend = !sc.set.legend; return unsigned{kRepaint}; }),
-        toggle("Crosshair", "", s.set.cross, [](Screen& sc) { sc.set.cross = !sc.set.cross; return unsigned{kOverlay}; }),
-        toggle("Index x-axis", "i", s.set.index, action::toggle_index),
-        {},
-        toggle("Save PNG", "Ctrl-S", false, [](Screen&) { return unsigned{kSave}; }),
-        toggle("Keypress help", "?", false, [](Screen& sc) { sc.ui.help = true; return unsigned{kOverlay}; }),
-        toggle("Exit", "q", false, [](Screen&) { return unsigned{kQuit}; }),
+        {"Scaling", "", false, {}, scaling},
     };
+    if (raster) {
+        std::vector<MenuItem> cmaps, reduces;
+        for (int i = 0; i < kNumColormaps; ++i) {
+            const auto c = static_cast<Colormap>(i);
+            cmaps.push_back(toggle(colormap_name(c), "", s.set.cmap == c, [c](Screen& sc) {
+                sc.set.cmap = c;
+                return unsigned{kRepaint};
+            }));
+        }
+        const std::pair<const char*, Reduce> kReduces[] = {
+            {"Max", Reduce::Max}, {"Min", Reduce::Min}, {"Mean", Reduce::Mean},
+            {"Max |z|", Reduce::MaxAbs}, {"First", Reduce::First}};
+        for (const auto& [label, r] : kReduces) {
+            reduces.push_back(toggle(label, "", s.set.reduce == r, [r = r](Screen& sc) { return action::set_reduce(sc, r); }));
+        }
+        // Cuts go through the point where the menu was opened.
+        const int mx = s.ui.menu ? s.ui.menu->x - 2 : s.ui.mx, my = s.ui.menu ? s.ui.menu->y - 2 : s.ui.my;
+        items.push_back({"Colormap", "c", false, {}, cmaps});
+        items.push_back({"Pixel reduce", "", false, {}, reduces});
+        items.push_back({"Cut here", "", false, {},
+                         {toggle("Row (x-cut)", "x", false, [mx, my](Screen& sc) { return action::request_cut(sc, true, mx, my); }),
+                          toggle("Column (y-cut)", "y", false, [mx, my](Screen& sc) { return action::request_cut(sc, false, mx, my); })}});
+    } else if (!traces.empty()) {
+        items.push_back({"Traces", "", false, {}, traces});
+    }
+    if (s.cut) {
+        items.push_back(toggle("Back to raster", "Esc", false, [](Screen&) { return unsigned{kPop}; }));
+    }
+    items.push_back({});
+    items.push_back(toggle("Grid", "g", s.set.grid, [](Screen& sc) { sc.set.grid = !sc.set.grid; return unsigned{kRepaint}; }));
+    if (!raster) {
+        items.push_back(toggle("Legend", "l", s.set.legend,
+                               [](Screen& sc) { sc.set.legend = !sc.set.legend; return unsigned{kRepaint}; }));
+    }
+    items.push_back(toggle("Crosshair", "", s.set.cross, [](Screen& sc) { sc.set.cross = !sc.set.cross; return unsigned{kOverlay}; }));
+    items.push_back(toggle("Index axes", "i", s.set.index, action::toggle_index));
+    items.push_back({});
+    items.push_back(toggle("Save PNG", "Ctrl-S", false, [](Screen&) { return unsigned{kSave}; }));
+    items.push_back(toggle("Keypress help", "?", false, [](Screen& sc) { sc.ui.help = true; return unsigned{kOverlay}; }));
+    items.push_back(toggle("Exit", "q", false, [](Screen&) { return unsigned{kQuit}; }));
+    return items;
 }
 
 unsigned open_menu(Screen& s, int x, int y) {

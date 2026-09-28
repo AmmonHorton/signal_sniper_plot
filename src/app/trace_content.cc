@@ -28,7 +28,7 @@ Range autoscale_y(const Span& extent) {
 }
 
 TraceContent::TraceContent(std::vector<Signal> signals, const PlotOptions& o)
-    : sigs_(std::move(signals)) {
+    : sigs_(std::move(signals)), opts_(o) {
     if (sigs_.empty()) throw std::invalid_argument("plot needs at least one signal");
     check_range(o.xrange, "xrange");
     check_range(o.yrange, "yrange");
@@ -50,9 +50,34 @@ TraceContent::TraceContent(std::vector<Signal> signals, const PlotOptions& o)
 
     initial_cmode_ = o.cmode;
     if (initial_cmode_ == CMode::Auto) initial_cmode_ = any_complex() ? CMode::Mag : CMode::Real;
-    if (initial_cmode_ == CMode::IR) {
-        throw std::invalid_argument("IR (imag vs real) mode is not implemented yet");
+}
+
+Settings TraceContent::initial_settings() const {
+    Settings s;
+    s.title = opts_.title;
+    s.cmode = initial_cmode_;
+    s.phunits = opts_.phunits;
+    s.index = opts_.index;
+    s.grid = opts_.grid;
+    s.legend = opts_.legend;
+    s.thickness = opts_.thickness;
+    return s;
+}
+
+View TraceContent::home(const Settings& s) const {
+    View v;
+    if (s.cmode == CMode::IR) {  // both axes autoscale from the window's samples
+        v.auto_x = true;
+        return v;
     }
+    const bool original_axes = s.index == opts_.index;
+    v.x = (original_axes && opts_.xrange) ? *opts_.xrange : x_extent(s.index);
+    if (opts_.yrange && s.cmode == initial_cmode_) v.y = *opts_.yrange;
+    return v;
+}
+
+std::vector<SampleRange> TraceContent::initial_ir() const {
+    return samples_in(opts_.xrange.value_or(x_extent(opts_.index)), opts_.index);
 }
 
 bool TraceContent::any_complex() const {
@@ -82,20 +107,44 @@ Range TraceContent::x_extent(bool index) const {
     return {s.lo, s.hi};
 }
 
-std::shared_ptr<ReduceResult> TraceContent::new_result(const XView& view, bool index,
-                                                     std::optional<Range> y) const {
+std::vector<SampleRange> TraceContent::samples_in(Range x, bool index) const {
+    std::vector<SampleRange> out;
+    for (const Signal& sg : sigs_) {
+        const double x0 = index ? 0.0 : sg.xstart, dx = index ? 1.0 : sg.xdelta;
+        auto clamp_index = [&](double t) -> std::size_t {
+            if (!(t > 0.0)) return 0;
+            return t >= static_cast<double>(sg.n) ? sg.n : static_cast<std::size_t>(t);
+        };
+        const std::size_t i0 = clamp_index(std::ceil((x.lo - x0) / dx));
+        const std::size_t i1 = clamp_index(std::floor((x.hi - x0) / dx) + 1.0);
+        out.push_back({i0, std::max(i0, i1)});
+    }
+    return out;
+}
+
+std::shared_ptr<ReduceResult> TraceContent::new_result(const ReduceRequest& req) const {
     auto r = std::make_shared<ReduceResult>();
-    r->view = view;
-    r->view.width = std::max(1, view.width);
-    r->view.height = std::max(1, view.height);
-    r->y = y;
-    r->y_requested = y;
+    r->req = req;
+    r->view = req.view;
+    r->view.width = std::max(1, req.view.width);
+    r->view.height = std::max(1, req.view.height);
+    r->total = r->view.width;
+    if (!req.auto_x) r->x = Range{req.view.x0, req.view.x1};
+    r->y = req.y;
     r->bins.resize(sigs_.size());
     r->xmap.resize(sigs_.size());
+    const bool ir = req.view.cmode == CMode::IR;
+    if (ir) r->density.resize(sigs_.size());
+    const std::size_t cells = static_cast<std::size_t>(r->view.width) * r->view.height;
     for (std::size_t i = 0; i < sigs_.size(); ++i) {
-        r->xmap[i] = index ? Range{0.0, 1.0} : Range{sigs_[i].xstart, sigs_[i].xdelta};
+        r->xmap[i] = req.index ? Range{0.0, 1.0} : Range{sigs_[i].xstart, sigs_[i].xdelta};
         if (!sigs_[i].visible) continue;
         r->traces.push_back(i);
+        if (ir) {
+            r->density[i].reset(new std::atomic<uint32_t>[cells]);
+            for (std::size_t k = 0; k < cells; ++k) r->density[i][k].store(0, std::memory_order_relaxed);
+            continue;
+        }
         TraceBins& b = r->bins[i];
         b.cols.assign(r->view.width, Bin{});
         if (sigs_[i].style == Style::Dots) {
@@ -113,28 +162,29 @@ bool same(const std::optional<Range>& a, const std::optional<Range>& b) {
 }
 }  // namespace
 
-bool TraceContent::reusable(const ReduceResult& r, const XView& view, bool index,
-                            std::optional<Range> y) const {
+bool TraceContent::reusable(const ReduceResult& r, const ReduceRequest& req) const {
     if (!r.complete()) return false;
-    const XView& v = r.view;
-    if (v.x0 != view.x0 || v.x1 != view.x1 || v.width != std::max(1, view.width) ||
-        v.height != std::max(1, view.height) || v.cmode != view.cmode || v.units != view.units ||
-        !same(r.y_requested, y)) {
+    const ReduceRequest& q = r.req;
+    const XView &a = q.view, &b = req.view;
+    const bool ir = b.cmode == CMode::IR;
+    if (a.width != b.width || a.height != b.height || a.cmode != b.cmode || a.units != b.units ||
+        q.index != req.index || q.auto_x != req.auto_x || !same(q.y, req.y)) {
         return false;
     }
+    if (!req.auto_x && (a.x0 != b.x0 || a.x1 != b.x1)) return false;
+    if (ir && q.ir != req.ir) return false;
     std::size_t k = 0;  // r.traces must be exactly the visible traces, with matching styles
     for (std::size_t i = 0; i < sigs_.size(); ++i) {
         if (!sigs_[i].visible) continue;
         if (k >= r.traces.size() || r.traces[k++] != i) return false;
-        if (r.bins[i].occ.empty() != (sigs_[i].style != Style::Dots)) return false;
-        const Range xm = index ? Range{0.0, 1.0} : Range{sigs_[i].xstart, sigs_[i].xdelta};
-        if (r.xmap[i].lo != xm.lo || r.xmap[i].hi != xm.hi) return false;
+        if (!ir && r.bins[i].occ.empty() != (sigs_[i].style != Style::Dots)) return false;
     }
     return k == r.traces.size();
 }
 
 void TraceContent::reduce(ReduceResult& r, const CancelToken& ct,
                           const std::function<void()>& progress) const {
+    if (r.view.cmode == CMode::IR) return reduce_ir(r, ct, progress);
     std::vector<TraceReducer> reducers;
     for (std::size_t t : r.traces) {
         reducers.emplace_back(*lods_[t], r.xmap[t].lo, r.xmap[t].hi, r.view, r.bins[t]);
@@ -175,14 +225,14 @@ Span TraceContent::extent(const ReduceResult& r, int done) const {
     return s;
 }
 
-void TraceContent::paint(Framebuffer& fb, const Rect& plot, const ReduceResult& r, int done,
-                         Range y, int thickness, const Theme& th) const {
+void TraceContent::paint(Framebuffer& fb, const ReduceResult& r, const PaintArgs& a) const {
+    if (r.view.cmode == CMode::IR) return paint_ir(fb, r, a);
     for (std::size_t t : r.traces) {
         const Signal& s = sigs_[t];
         if (!s.visible) continue;
-        const TraceStyle st{s.style, s.color.value_or(th.trace_color(t)),
-                            s.thickness > 0 ? s.thickness : thickness};
-        paint_trace(fb, r.bins[t], done, r.view, plot, y.lo, y.hi, st);
+        const TraceStyle st{s.style, s.color.value_or(a.th.trace_color(t)),
+                            s.thickness > 0 ? s.thickness : a.set.thickness};
+        paint_trace(fb, r.bins[t], a.done, r.view, a.plot, a.y.lo, a.y.hi, st);
     }
 }
 

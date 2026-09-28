@@ -18,6 +18,9 @@ enum Inval : unsigned {
     kResume = 1 << 4,   ///< Re-run the current view's reduce.
     kSave = 1 << 5,     ///< Save the plot as PNG.
     kQuit = 1 << 6,
+    kCut = 1 << 7,   ///< Open the cut in Screen::cut_request.
+    kPop = 1 << 8,   ///< Leave this cut, back to the raster.
+    kStep = 1 << 9,  ///< Move the cut by Screen::cut_step.
 };
 
 /// @param rendering true while a reduce is still running.
@@ -34,6 +37,12 @@ unsigned autoscale_y(Screen& s);
 /// @brief Push `v` as a new zoom level (so right-click undoes it).
 unsigned zoom_to(Screen& s, const View& v);
 unsigned open_prompt(Screen& s, PromptState::Kind kind);
+/// @brief Cut through the raster cell at pixel (px, py).
+unsigned request_cut(Screen& s, bool xcut, int px, int py);
+unsigned cycle_colormap(Screen& s, int step);
+unsigned set_reduce(Screen& s, Reduce r);
+/// @brief Slide the colour range by `f` of its width ([ and ]).
+unsigned shift_z(Screen& s, double f);
 }  // namespace action
 
 }  // namespace ssp

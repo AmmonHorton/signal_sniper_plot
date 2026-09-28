@@ -12,15 +12,18 @@ constexpr int kTop = 2 * kCH + 4;          // title row (+ room for a progress b
 constexpr int kXLabels = kCH + 6;          // x tick labels
 constexpr int kReadout = 2 * kCH + 6;      // two readout lines
 constexpr int kRight = 16;
+constexpr int kBarGap = 10, kBarW = 12;                                       // colour bar
+constexpr int kBarRight = kBarGap + kBarW + 6 + kMaxTickLabelChars * kCW + 6;  // + its labels
 constexpr int kTickLen = 4;
 constexpr int kGridDot = 3;
 
 }  // namespace
 
-Layout compute_layout(int window_w, int window_h) {
+Layout compute_layout(int window_w, int window_h, bool colorbar) {
     constexpr int kLeft = kMaxTickLabelChars * kCW + 12;
+    const int right = colorbar ? kRight + kBarRight : kRight;
     Layout l;
-    l.plot = {kLeft, kTop, std::max(1, window_w - kLeft - kRight),
+    l.plot = {kLeft, kTop, std::max(1, window_w - kLeft - right),
               std::max(1, window_h - kTop - kXLabels - kReadout)};
     l.title = {0, 0, window_w, kTop};
     l.xlabels = {0, l.plot.bottom(), window_w, kXLabels};
@@ -32,7 +35,8 @@ int xdivisions(int plot_w) { return std::clamp(plot_w / 110, 2, 10); }
 int ydivisions(int plot_h) { return std::clamp(plot_h / 60, 2, 10); }
 
 void draw_axes(Framebuffer& fb, const Layout& l, double x0, double x1, const AxisTicks& xt,
-               double y0, double y1, const AxisTicks& yt, bool grid, const Theme& th) {
+               double y0, double y1, const AxisTicks& yt, bool grid, const Theme& th,
+               bool ydown) {
     const Rect& p = l.plot;
 
     // x: grid, tick marks, labels (skipping any that would overlap the previous one or the note).
@@ -59,8 +63,8 @@ void draw_axes(Framebuffer& fb, const Layout& l, double x0, double x1, const Axi
 
     // y
     for (std::size_t i = 0; i < yt.values.size(); ++i) {
-        const int y = std::min(p.bottom() - 1,
-                               p.y + static_cast<int>(std::floor((y1 - yt.values[i]) / (y1 - y0) * p.h)));
+        const double from_top = ydown ? yt.values[i] - y0 : y1 - yt.values[i];
+        const int y = std::min(p.bottom() - 1, p.y + static_cast<int>(std::floor(from_top / (y1 - y0) * p.h)));
         if (y < p.y) continue;
         if (grid) fb.hline(p.x, p.right() - 1, y, th.grid, kGridDot);
         fb.hline(p.x, p.x + kTickLen - 1, y, th.fg);
@@ -72,6 +76,26 @@ void draw_axes(Framebuffer& fb, const Layout& l, double x0, double x1, const Axi
     if (!yt.note.empty()) fb.text(2, p.y - kCH - 2, yt.note, th.fg);
 
     fb.rect_outline({p.x - 1, p.y - 1, p.w + 2, p.h + 2}, th.fg);
+}
+
+void draw_colorbar(Framebuffer& fb, const Layout& l, double z0, double z1,
+                   const std::array<uint32_t, 256>& lut, const Theme& th) {
+    const Rect& p = l.plot;
+    const Rect bar{p.right() + kBarGap, p.y, kBarW, p.h};
+    for (int y = 0; y < bar.h; ++y) {
+        const int k = std::clamp(static_cast<int>((1.0 - (y + 0.5) / bar.h) * 256.0), 0, 255);
+        fb.hline(bar.x, bar.right() - 1, bar.y + y, lut[k]);
+    }
+    fb.rect_outline({bar.x - 1, bar.y - 1, bar.w + 2, bar.h + 2}, th.fg);
+    if (!(z1 > z0)) return;
+    const AxisTicks zt = make_ticks(z0, z1, ydivisions(bar.h));
+    for (std::size_t i = 0; i < zt.values.size(); ++i) {
+        const int y = std::min(bar.bottom() - 1,
+                               bar.y + static_cast<int>(std::floor((z1 - zt.values[i]) / (z1 - z0) * bar.h)));
+        fb.hline(bar.right() + 1, bar.right() + 3, y, th.fg);
+        fb.text(bar.right() + 6, std::clamp(y - kCH / 2, bar.y - kCH / 2, bar.bottom() - kCH / 2), zt.labels[i], th.fg);
+    }
+    if (!zt.note.empty()) fb.text(bar.x, bar.bottom() + 4, zt.note, th.fg);
 }
 
 void draw_title(Framebuffer& fb, const Layout& l, const std::string& title, const Theme& th) {

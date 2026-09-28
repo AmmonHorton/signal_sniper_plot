@@ -11,6 +11,7 @@
 
 #include "render/png.h"
 #include "app/compose.h"
+#include "app/raster_content.h"
 
 namespace ssp {
 namespace {
@@ -46,7 +47,7 @@ void check_golden(const std::string& name, const Framebuffer& fb) {
 
 Framebuffer render(std::vector<Signal> sigs, PlotOptions o) {
     Framebuffer fb(kW, kH);
-    Screen s(std::make_unique<TraceContent>(std::move(sigs), o), o);
+    Screen s(std::make_unique<TraceContent>(std::move(sigs), o));
     render_headless(fb, s);
     return fb;
 }
@@ -114,6 +115,29 @@ TEST(Golden, TwoMillionSampleChirp) {
     PlotOptions o;
     o.title = "2M-sample int16 chirp";
     check_golden("chirp_2m", render({Signal(v, 1e9, 1.0, "chirp")}, o));
+}
+
+TEST(Golden, RasterChirpSpectrogram) {
+    const std::size_t frames = 200, bins = 256;
+    std::vector<float> v(frames * bins);
+    uint32_t st = 99;
+    for (std::size_t r = 0; r < frames; ++r) {
+        const double peak = 20.0 + r * 1.0 + 15.0 * std::sin(r * 0.05);
+        for (std::size_t b = 0; b < bins; ++b) {
+            st = st * 1664525u + 1013904223u;
+            const double d = (b - peak) / 3.0;
+            v[r * bins + b] = float(1e-3 * (0.5 + (st >> 8) / double(1u << 24)) + std::exp(-d * d));
+        }
+    }
+    RasterOptions o;
+    o.title = "raster: chirp, 20log10";
+    o.subsize = bins;
+    o.cmode = CMode::Log20;
+    o.ydelta = 0.01;
+    Screen s(std::make_unique<RasterContent>(Signal(v, 0.0, 1e3), o));
+    Framebuffer fb(kW, kH);
+    render_headless(fb, s);
+    check_golden("raster_chirp", fb);
 }
 
 }  // namespace

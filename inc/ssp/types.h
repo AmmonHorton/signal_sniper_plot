@@ -32,6 +32,13 @@ enum class PhaseUnits : uint8_t { Radians, Degrees, Cycles };
 /// @brief How a trace is drawn.
 enum class Style : uint8_t { Lines, Dots, LinesDots };
 
+/// @brief Raster colour tables (XMidas/SigPlot).
+enum class Colormap : uint8_t { Greyscale, Ramp, ColorWheel, Spectrum, CalEWhite, HotDesat, Sunset, Hot, Cold };
+constexpr int kNumColormaps = 9;
+
+/// @brief How a raster pixel combines the many samples under it (SigPlot "xcompression").
+enum class Reduce : uint8_t { Max, Min, Mean, MaxAbs, First };
+
 /// @brief A closed interval [lo, hi] in data units.
 struct Range {
     double lo = 0.0;

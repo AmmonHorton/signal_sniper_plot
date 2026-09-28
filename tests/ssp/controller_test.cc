@@ -30,7 +30,7 @@ protected:
     void SetUp() override { make({Signal(a_, 0.0, 1.0, "a"), Signal(b_, 0.0, 1.0, "b")}); }
 
     void make(std::vector<Signal> sigs, PlotOptions o = {}) {
-        screen_ = std::make_unique<Screen>(std::make_unique<TraceContent>(std::move(sigs), o), o);
+        screen_ = std::make_unique<Screen>(std::make_unique<TraceContent>(std::move(sigs), o));
         render_headless(fb_, *screen_);
     }
     Screen& s() { return *screen_; }
@@ -93,22 +93,42 @@ TEST_F(ControllerTest, ModeKeysKeepXAndRescaleYAtEveryLevel) {
     EXPECT_FALSE(s().views.top().y.has_value());
 
     EXPECT_EQ(handle_event(s(), key('3'), false) & kReduce, 0u);  // no change
-    EXPECT_EQ(handle_event(s(), key('5'), false) & kReduce, 0u);  // IR not yet
-    EXPECT_EQ(s().set.cmode, CMode::Real);
-    EXPECT_FALSE(s().message.empty());
+}
+
+TEST_F(ControllerTest, IrUsesTheTimeWindowInViewAndResetsLevels) {
+    action::zoom_to(s(), View{{100.0, 199.5}, std::nullopt});
+    s().xshown = {100.0, 199.5};
+    EXPECT_TRUE(handle_event(s(), key('5'), false) & kReduce);
+    EXPECT_EQ(s().set.cmode, CMode::IR);
+    EXPECT_EQ(s().views.level(), 0u);
+    EXPECT_TRUE(s().views.top().auto_x);
+    ASSERT_EQ(s().ir.size(), 2u);
+    EXPECT_EQ(s().ir[0], (SampleRange{100, 200}));  // samples whose x is in [100, 199.5]
+
+    // Box zoom inside IR gives explicit axes; leaving IR returns to the time home.
+    s().xshown = {-2.0, 2.0};
+    s().yshown = {-2.0, 2.0};
+    handle_event(s(), press(plot().x + 20, plot().y + 20), false);
+    handle_event(s(), release(plot().x + 200, plot().y + 150), false);
+    EXPECT_FALSE(s().views.top().auto_x);
+    EXPECT_EQ(s().views.level(), 1u);
+    EXPECT_TRUE(handle_event(s(), key('1'), false) & kReduce);
+    EXPECT_EQ(s().views.level(), 0u);
+    EXPECT_FALSE(s().views.top().auto_x);
+    EXPECT_EQ(s().views.top().x.hi, 999.0);
 }
 
 TEST_F(ControllerTest, LegendTogglesVisibilityAndStyle) {
     ASSERT_EQ(s().legend_hits.size(), 2u);
     const Rect r = s().legend_hits[1];
     EXPECT_TRUE(handle_event(s(), press(r.x + 2, r.y + 2), false) & kRepaint);  // hide: repaint
-    EXPECT_FALSE(s().content->signal(1).visible);
+    EXPECT_FALSE(s().traces()->signal(1).visible);
     EXPECT_TRUE(handle_event(s(), press(r.x + 2, r.y + 2), false) & kReduce);   // show: needs bins
-    EXPECT_TRUE(s().content->signal(1).visible);
+    EXPECT_TRUE(s().traces()->signal(1).visible);
     EXPECT_TRUE(handle_event(s(), press(r.x + 2, r.y + 2, 3), false) & kReduce);  // → dots
-    EXPECT_EQ(s().content->signal(1).style, Style::Dots);
+    EXPECT_EQ(s().traces()->signal(1).style, Style::Dots);
     EXPECT_TRUE(handle_event(s(), press(r.x + 2, r.y + 2, 3), false) & kRepaint);  // → both
-    EXPECT_EQ(s().content->signal(1).style, Style::LinesDots);
+    EXPECT_EQ(s().traces()->signal(1).style, Style::LinesDots);
     EXPECT_EQ(s().views.level(), 0u);  // legend clicks never start a zoom
 }
 
@@ -233,6 +253,98 @@ TEST_F(ControllerTest, PhaseUnitsOnlyRecomputeInPhaseMode) {
     EXPECT_EQ(action::set_phunits(s(), PhaseUnits::Degrees) & kReduce, 0u);
     action::set_mode(s(), CMode::Phase);
     EXPECT_TRUE(action::set_phunits(s(), PhaseUnits::Cycles) & kReduce);
+}
+
+InputEvent wheel(int x, int y, int button, unsigned mods = 0) {
+    InputEvent e{T::Press, x, y, button};
+    e.mods = mods;
+    return e;
+}
+
+TEST_F(ControllerTest, ClickSetsMarkerAndKClearsIt) {
+    const int x = plot().x + 100, y = plot().y + 50;
+    handle_event(s(), press(x, y), false);
+    EXPECT_EQ(handle_event(s(), release(x + 1, y), false) & kReduce, 0u);
+    ASSERT_TRUE(s().ui.marker.has_value());
+    EXPECT_NEAR(s().ui.marker->first, s().px_to_x(x + 1), 1e-12);
+    EXPECT_EQ(s().views.level(), 0u);
+    handle_event(s(), key('k'), false);
+    EXPECT_FALSE(s().ui.marker.has_value());
+    handle_event(s(), press(x, y), false);
+    handle_event(s(), release(x, y), false);
+    action::set_mode(s(), CMode::Real);
+    EXPECT_FALSE(s().ui.marker.has_value()) << "mode change invalidates the marker's y";
+}
+
+TEST_F(ControllerTest, WheelZoomsAboutThePointerInOneLevel) {
+    const int x = plot().x + plot().w / 4, y = plot().y + 40;
+    const Range home = s().views.top().x;
+    const double anchor = s().px_to_x(x);
+    EXPECT_TRUE(handle_event(s(), wheel(x, y, 4), false) & kReduce);
+    ASSERT_EQ(s().views.level(), 1u);
+    const Range z = s().views.top().x;
+    EXPECT_NEAR(z.hi - z.lo, 0.8 * (home.hi - home.lo), 1e-9);
+    EXPECT_NEAR((anchor - z.lo) / (z.hi - z.lo), (anchor - home.lo) / (home.hi - home.lo), 1e-9)
+        << "the point under the pointer stays put";
+
+    s().xshown = s().views.top().x;  // what compose would show
+    handle_event(s(), wheel(x, y, 4), false);
+    EXPECT_EQ(s().views.level(), 1u) << "further wheel steps adjust the same level";
+    for (int i = 0; i < 4; ++i) {
+        s().xshown = s().views.top().x;
+        handle_event(s(), wheel(x, y, 5), false);
+    }
+    EXPECT_EQ(s().views.level(), 0u) << "wheeling out returns to the level below";
+    EXPECT_EQ(handle_event(s(), wheel(x, y, 5), false) & kReduce, 0u) << "never out past home";
+}
+
+TEST_F(ControllerTest, ShiftWheelZoomsYOnly) {
+    const Range x0 = s().views.top().x;
+    handle_event(s(), wheel(plot().x + 50, plot().y + 50, 4, mods::kShift), false);
+    EXPECT_EQ(s().views.top().x.lo, x0.lo);
+    ASSERT_TRUE(s().views.top().y.has_value());
+    EXPECT_NEAR(s().views.top().y->hi - s().views.top().y->lo, 0.8 * (s().yshown.hi - s().yshown.lo), 1e-9);
+}
+
+TEST_F(ControllerTest, ArrowsPanWithinTheData) {
+    EXPECT_EQ(handle_event(s(), key(key::kRight), false) & kReduce, 0u) << "home already shows all x";
+    EXPECT_EQ(s().views.level(), 0u);
+    action::zoom_to(s(), View{{100.0, 200.0}, std::nullopt});
+    s().xshown = {100.0, 200.0};
+    EXPECT_TRUE(handle_event(s(), key(key::kRight), false) & kReduce);
+    EXPECT_EQ(s().views.top().x.lo, 150.0);
+    EXPECT_EQ(s().views.level(), 2u);
+    s().xshown = {900.0, 1000.0};
+    handle_event(s(), key(key::kRight), false);
+    EXPECT_EQ(s().views.top().x.hi, 999.0) << "clamped to the end of the data";
+    EXPECT_EQ(s().views.level(), 2u) << "panning adjusts one level";
+}
+
+TEST_F(ControllerTest, ShiftDragPans) {
+    action::zoom_to(s(), View{{100.0, 200.0}, Range{-1.0, 1.0}});
+    s().xshown = {100.0, 200.0};
+    s().yshown = {-1.0, 1.0};
+    const int x = plot().x + 100, y = plot().y + 50;
+    InputEvent p = press(x, y);
+    p.mods = mods::kShift;
+    handle_event(s(), p, false);
+    EXPECT_FALSE(s().ui.dragging);
+    EXPECT_TRUE(handle_event(s(), motion(x + plot().w / 10, y), false) & kReduce);
+    const double moved = double(plot().w / 10) / plot().w * 100.0;
+    EXPECT_NEAR(s().views.top().x.lo, 100.0 - moved, 1e-9) << "data follows the pointer";
+    handle_event(s(), release(x + plot().w / 10, y), false);
+    EXPECT_FALSE(s().ui.panning);
+    EXPECT_EQ(s().views.level(), 2u);
+}
+
+TEST_F(ControllerTest, AKeyCyclesReadout) {
+    EXPECT_EQ(s().set.absc, Absc::X);
+    handle_event(s(), key('a'), false);
+    EXPECT_EQ(s().set.absc, Absc::Index);
+    handle_event(s(), key('a'), false);
+    EXPECT_EQ(s().set.absc, Absc::Inverse);
+    handle_event(s(), key('a'), false);
+    EXPECT_EQ(s().set.absc, Absc::X);
 }
 
 }  // namespace

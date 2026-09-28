@@ -55,6 +55,10 @@ class SavePng(unittest.TestCase):
                        xrange=(0, 100), yrange=(-80, 80), phunits="deg")
         self.assertTrue(out.startswith(b"\x89PNG"))
 
+    def test_ir_mode(self):
+        iq = np.exp(1j * (np.pi / 4 + np.pi / 2 * np.random.randint(0, 4, 50000))).astype(np.complex64)
+        self.assertTrue(self.png(iq, cmode="ir", xrange=(1000, 20000)).startswith(b"\x89PNG"))
+
     def test_bad_input_raises_python_errors(self):
         v = np.zeros(10)
         with self.assertRaises(TypeError):
@@ -75,12 +79,54 @@ class SavePng(unittest.TestCase):
             self.png(v, xdelta=0)
 
 
+class Raster(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.n = 0
+
+    def png(self, data, **kw):
+        self.n += 1
+        path = os.path.join(self.dir, f"r{self.n}.png")
+        ssp.save_raster_png(path, data, width=400, height=300, **kw)
+        with open(path, "rb") as f:
+            return f.read()
+
+    def test_2d_and_1d_with_subsize_match(self):
+        m = np.outer(np.sin(np.arange(120) * 0.1), np.cos(np.arange(80) * 0.05)).astype(np.float32)
+        self.assertEqual(self.png(m), self.png(m.ravel(), subsize=80))
+
+    def test_views_read_in_place_match_copies(self):
+        big = np.random.default_rng(0).standard_normal((200, 300))
+        view = big[10:150:2, 5:250:3]  # strided rows and columns
+        self.assertEqual(self.png(view), self.png(np.ascontiguousarray(view)))
+        self.assertEqual(self.png(big[::-1]), self.png(big[::-1].copy()))
+
+    def test_options(self):
+        spec = (np.random.default_rng(1).standard_normal((64, 128)) +
+                1j * np.random.default_rng(2).standard_normal((64, 128))).astype(np.complex64)
+        out = self.png(spec, cmode="20log", cmap="hot", reduce="mean", zrange=(-40, 20),
+                       xstart=-64, xdelta=1.0, ystart=0, ydelta=0.5, title="spec", grid=True)
+        self.assertTrue(out.startswith(b"\x89PNG"))
+
+    def test_bad_input(self):
+        with self.assertRaises(ValueError):
+            self.png(np.zeros(100))  # 1-D without subsize
+        with self.assertRaises(ValueError):
+            self.png(np.zeros((4, 5)), subsize=3)
+        with self.assertRaises(ValueError):
+            self.png(np.zeros((4, 5)), cmap="rainbow")
+        with self.assertRaises(ValueError):
+            self.png(np.zeros((4, 5)), cmode="ir")
+
+
 class Window(unittest.TestCase):
     def test_no_display_is_a_runtime_error_not_a_crash(self):
         saved = os.environ.pop("DISPLAY", None)
         try:
             with self.assertRaises(RuntimeError):
                 ssp.plot(np.zeros(10))
+            with self.assertRaises(RuntimeError):
+                ssp.raster(np.zeros((4, 4)))
         finally:
             if saved is not None:
                 os.environ["DISPLAY"] = saved

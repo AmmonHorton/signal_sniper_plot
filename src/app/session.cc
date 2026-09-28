@@ -9,6 +9,7 @@
 
 #include "app/compose.h"
 #include "app/controller.h"
+#include "app/cut.h"
 #include "app/job_runner.h"
 #include "app/overlay.h"
 #include "app/screen.h"
@@ -43,11 +44,10 @@ void copy_rect(const Framebuffer& from, Framebuffer& to, Rect r) {
 
 class Loop {
 public:
-    Loop(std::vector<Signal> signals, const PlotOptions& o, Backend& be)
-        : be_(be),
-          screen_(std::make_unique<TraceContent>(std::move(signals), o), o),
-          plot_(be.width(), be.height()),
-          frame_(plot_) {}
+    Loop(std::unique_ptr<Content> content, Backend& be)
+        : be_(be), plot_(be.width(), be.height()), frame_(plot_) {
+        screens_.push_back(std::make_unique<Screen>(std::move(content)));
+    }
 
     void run(const std::function<bool()>& interrupt) {
         submit();
@@ -73,7 +73,7 @@ public:
                 } else if (e.type == InputEvent::Type::Exposed) {
                     damage.push_back(e.rect);
                 } else {
-                    inv |= handle_event(screen_, e, rendering());
+                    inv |= handle_event(top(), e, rendering());
                     if (inv & kCancel) {
                         stop();
                         inv &= ~kCancel;
@@ -81,6 +81,9 @@ public:
                 }
             }
             if ((inv & kQuit) || (interrupt && interrupt())) break;
+            if (inv & kCut) push_cut();
+            if (inv & kPop) pop();
+            if (inv & kStep) step();
             if (inv & (kReduce | kResume)) submit();
             if (inv & kSave) save();
             frame(inv, damage);
@@ -90,32 +93,36 @@ public:
     }
 
 private:
+    Screen& top() { return *screens_.back(); }
+    const Screen& top() const { return *screens_.back(); }
+
     bool rendering() const {
-        return screen_.result && !screen_.stopped &&
-               !screen_.result->ended.load(std::memory_order_acquire);
+        const Screen& s = top();
+        return s.result && !s.stopped && !s.result->ended.load(std::memory_order_acquire);
     }
     int done() const {
-        return screen_.result ? screen_.result->done.load(std::memory_order_acquire) : 0;
+        return top().result ? top().result->done.load(std::memory_order_acquire) : 0;
     }
+
     void submit() {
-        Screen& s = screen_;
-        s.layout = compute_layout(plot_.width(), plot_.height());
-        const XView view = s.xview();
+        Screen& s = top();
+        s.layout = s.layout_for(plot_.width(), plot_.height());
+        const ReduceRequest req = s.request();
         View& level = s.views.top_mut();
-        if (level.cache && s.content->reusable(*level.cache, view, s.set.index, level.y)) {
+        if (level.cache && s.content->reusable(*level.cache, req)) {
             jobs_.cancel();  // e.g. unzoom while the deeper level was still rendering
             s.result = level.cache;
             s.stopped = false;
             shown_done_ = -1;  // repaint from it now
             return;
         }
-        auto r = s.content->new_result(view, s.set.index, level.y);
+        auto r = s.content->new_result(req);
         level.cache = r;
         s.result = r;
         s.stopped = false;
         shown_done_ = 0;  // keep the old picture until columns arrive (or kBlankDelay passes)
         submitted_ = Clock::now();
-        const TraceContent* content = s.content.get();
+        const Content* content = s.content.get();
         JobRunner* jobs = &jobs_;
         jobs_.submit([content, r, jobs](const CancelToken& ct) {
             struct Ended {
@@ -126,18 +133,51 @@ private:
         });
     }
 
+    /// Stop the job and wait for it, before freeing anything it may be reading.
+    void quiesce() {
+        jobs_.cancel();
+        jobs_.wait_idle();
+    }
+
+    void push_cut() {
+        Screen& raster = top();
+        const auto [xcut, index] = *raster.cut_request;
+        raster.cut_request.reset();
+        quiesce();
+        if (raster.result && !raster.result->complete()) raster.stopped = true;
+        screens_.push_back(make_cut(raster, xcut, index));
+        first_ = true;
+        submit();
+    }
+
+    void pop() {
+        if (screens_.size() < 2) return;
+        quiesce();  // the cut's job reads the cut's content
+        screens_.pop_back();
+        first_ = true;
+        submit();  // the raster's finished result is cached, so this is instant
+    }
+
+    void step() {
+        Screen& cut = top();
+        const int by = cut.cut_step;
+        cut.cut_step = 0;
+        quiesce();  // the job reads the content being replaced
+        if (step_cut(cut, by)) submit();
+    }
+
     void stop() {
         jobs_.cancel();
-        screen_.stopped = true;
+        top().stopped = true;
     }
 
     void save() {
-        const std::string path = png_name(screen_.set.title);
+        const std::string path = png_name(top().set.title);
         try {
             write_png(plot_, path);
-            screen_.message = "saved " + path;
+            top().message = "saved " + path;
         } catch (const std::exception& e) {
-            screen_.message = e.what();
+            top().message = e.what();
         }
     }
 
@@ -148,7 +188,7 @@ private:
         const bool blank_due = shown_done_ == 0 && d == 0 && !shown_blank_ &&
                                Clock::now() - submitted_ >= kBlankDelay;
         if ((inv & kRepaint) || new_columns || blank_due || first_) {
-            compose(plot_, screen_, d, theme_);
+            compose(plot_, top(), d, theme_);
             shown_done_ = d;
             shown_blank_ = d == 0;
             first_ = false;
@@ -161,16 +201,15 @@ private:
         }
         if (d > 0) shown_blank_ = false;
 
-        const double progress =
-            screen_.result ? static_cast<double>(d) / screen_.result->width() : 1.0;
-        overlay_ = draw_overlay(frame_, screen_, theme_, rendering(), progress);
+        const double progress = top().result ? top().result->progress(d) : 1.0;
+        overlay_ = draw_overlay(frame_, top(), theme_, rendering(), progress);
         damage.insert(damage.end(), overlay_.begin(), overlay_.end());
         be_.present(frame_, damage);
     }
 
     Backend& be_;
     Theme theme_;
-    Screen screen_;
+    std::vector<std::unique_ptr<Screen>> screens_;  ///< [0] = main screen; cuts stack on top.
     Framebuffer plot_;   // composed plot, no overlays (also what Ctrl-S saves)
     Framebuffer frame_;  // plot_ + overlays: what is on screen
     std::vector<Rect> overlay_;
@@ -183,9 +222,14 @@ private:
 
 }  // namespace
 
+void run_session(std::unique_ptr<Content> content, Backend& backend,
+                 const std::function<bool()>& interrupt) {
+    Loop(std::move(content), backend).run(interrupt);
+}
+
 void run_plot(std::vector<Signal> signals, const PlotOptions& options, Backend& backend,
               const std::function<bool()>& interrupt) {
-    Loop(std::move(signals), options, backend).run(interrupt);
+    run_session(std::make_unique<TraceContent>(std::move(signals), options), backend, interrupt);
 }
 
 }  // namespace ssp

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "app/compose.h"
+#include "app/raster_content.h"
 
 using Clock = std::chrono::steady_clock;
 
@@ -24,7 +25,7 @@ int main(int argc, char** argv) {
     ssp::Framebuffer fb(1920, 1080);
     // One Screen kept across renders so its pyramid is reused, as the interactive app does.
     ssp::PlotOptions o;
-    ssp::Screen s(std::make_unique<ssp::TraceContent>(std::vector<ssp::Signal>{ssp::Signal(v)}, o), o);
+    ssp::Screen s(std::make_unique<ssp::TraceContent>(std::vector<ssp::Signal>{ssp::Signal(v)}, o));
     auto t0 = Clock::now();
     ssp::render_headless(fb, s);
     std::printf("  %-44s %9.1f ms\n", "first full view (scan + build pyramid)", ms_since(t0));
@@ -36,7 +37,9 @@ int main(int argc, char** argv) {
     for (double frac : {0.5, 0.01, 1e-4, 1e-6}) {
         z.x0 = 0.3 * n;
         z.x1 = z.x0 + frac * n;
-        auto r = s.content->new_result(z, false);
+        ssp::ReduceRequest rq;
+        rq.view = z;
+        auto r = s.content->new_result(rq);
         t0 = Clock::now();
         s.content->reduce(*r, {});
         char label[64];
@@ -50,13 +53,39 @@ int main(int argc, char** argv) {
         st = st * 1664525u + 1013904223u;
         x = std::polar(1.0f, float(M_PI / 4 + (st >> 30) * M_PI / 2));  // QPSK
     }
+    {
+        ssp::PlotOptions po;
+        po.cmode = ssp::CMode::IR;
+        ssp::Screen q(std::make_unique<ssp::TraceContent>(std::vector<ssp::Signal>{ssp::Signal(v)}, po));
+        for (const char* when : {"IR first view (whole signal)", "IR again"}) {
+            t0 = Clock::now();
+            ssp::render_headless(fb, q);
+            std::printf("  %-44s %9.1f ms\n", when, ms_since(t0));
+        }
+    }
+    {
+        // The same samples as a raster of 4096-sample frames (~49k frames).
+        ssp::RasterOptions ro;
+        ro.subsize = 4096;
+        ro.cmode = ssp::CMode::Log20;
+        ssp::Screen q(std::make_unique<ssp::RasterContent>(ssp::Signal(v), ro));
+        for (const char* when : {"raster 20log, whole (max)", "raster again"}) {
+            t0 = Clock::now();
+            ssp::render_headless(fb, q);
+            std::printf("  %-44s %9.1f ms\n", when, ms_since(t0));
+        }
+        q.views.push(ssp::View{{0.0, 400.0}, ssp::Range{1000.0, 2000.0}});
+        t0 = Clock::now();
+        ssp::render_headless(fb, q);
+        std::printf("  %-44s %9.1f ms\n", "raster zoomed to 400 x 1000 cells", ms_since(t0));
+    }
     std::printf("QPSK, phase mode:\n");
     for (ssp::Style style : {ssp::Style::Lines, ssp::Style::Dots}) {
         ssp::Signal sig(v);
         sig.style = style;
         ssp::PlotOptions po;
         po.cmode = ssp::CMode::Phase;
-        ssp::Screen q(std::make_unique<ssp::TraceContent>(std::vector<ssp::Signal>{sig}, po), po);
+        ssp::Screen q(std::make_unique<ssp::TraceContent>(std::vector<ssp::Signal>{sig}, po));
         const char* name = style == ssp::Style::Dots ? "dots " : "lines";
         for (const char* when : {"first view", "again"}) {
             t0 = Clock::now();
@@ -67,7 +96,9 @@ int main(int argc, char** argv) {
             ssp::XView zz = q.xview();
             zz.x0 = 0.3 * n;
             zz.x1 = zz.x0 + frac * n;
-            auto r = q.content->new_result(zz, false);
+            ssp::ReduceRequest rq;
+            rq.view = zz;
+            auto r = q.content->new_result(rq);
             t0 = Clock::now();
             q.content->reduce(*r, {});
             std::printf("  %s zoom to %-30g %9.1f ms\n", name, frac, ms_since(t0));

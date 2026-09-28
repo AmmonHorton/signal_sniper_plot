@@ -151,22 +151,86 @@ TEST(TraceContent, QpskPhaseDotsShowFourDistinctLevels) {
     o.cmode = CMode::Phase;
     Signal dots(v);
     dots.style = Style::Dots;
-    Screen s(std::make_unique<TraceContent>(std::vector<Signal>{dots}, o), o);
+    Screen s(std::make_unique<TraceContent>(std::vector<Signal>{dots}, o));
     Framebuffer fb(500, 300);
     render_headless(fb, s);
     const uint32_t color = Theme{}.trace_color(0);
     EXPECT_EQ(rows_with(fb, s.layout.plot, color).size(), 4u);
 
-    Screen lines(std::make_unique<TraceContent>(std::vector<Signal>{Signal(v)}, o), o);
+    Screen lines(std::make_unique<TraceContent>(std::vector<Signal>{Signal(v)}, o));
     render_headless(fb, lines);
     EXPECT_GT(rows_with(fb, lines.layout.plot, color).size(), 100u);
+}
+
+/// Non-empty density cells of trace t.
+std::size_t lit_cells(const ReduceResult& r, std::size_t t, uint64_t* total = nullptr) {
+    std::size_t n = 0;
+    uint64_t sum = 0;
+    for (int k = 0; k < r.view.width * r.view.height; ++k) {
+        const uint32_t c = r.density[t][k].load();
+        n += c != 0;
+        sum += c;
+    }
+    if (total) *total = sum;
+    return n;
+}
+
+TEST(TraceContent, IrQpskIsFourClusters) {
+    std::vector<std::complex<float>> v(200'000);
+    uint32_t st = 3;
+    for (auto& x : v) {
+        st = st * 1664525u + 1013904223u;
+        x = std::polar(1.0f, float(M_PI / 4 + (st >> 30) * M_PI / 2));
+    }
+    PlotOptions o;
+    o.cmode = CMode::IR;
+    Screen s(std::make_unique<TraceContent>(std::vector<Signal>{Signal(v)}, o));
+    Framebuffer fb(500, 300);
+    render_headless(fb, s);
+    ASSERT_TRUE(s.result->complete());
+    uint64_t total = 0;
+    const std::size_t cells = lit_cells(*s.result, 0, &total);
+    EXPECT_EQ(total, v.size()) << "every sample lands in the autoscaled plane";
+    EXPECT_GE(cells, 4u);
+    EXPECT_LE(cells, 16u) << "four constellation points, maybe split across pixel edges";
+    EXPECT_NEAR(s.xshown.hi, std::cos(M_PI / 4) * 1.04, 0.03) << "x autoscaled to the real part";
+}
+
+TEST(TraceContent, IrPlotsOnlyTheChosenTimeWindow) {
+    // First half sits at +1, second half at -1: a window in the second half has one cluster.
+    std::vector<std::complex<double>> v(10'000);
+    for (std::size_t i = 0; i < v.size(); ++i) v[i] = {i < 5000 ? 1.0 : -1.0, 0.0};
+    PlotOptions o;
+    o.cmode = CMode::IR;
+    o.xrange = Range{6000, 8000};
+    Screen s(std::make_unique<TraceContent>(std::vector<Signal>{Signal(v)}, o));
+    Framebuffer fb(400, 300);
+    render_headless(fb, s);
+    uint64_t total = 0;
+    EXPECT_EQ(lit_cells(*s.result, 0, &total), 1u);
+    EXPECT_EQ(total, 2001u);
+    // Only the -1 samples were used for autoscale (a flat extent widens by 1 each side).
+    EXPECT_EQ(s.xshown.lo, -2.0);
+    EXPECT_EQ(s.xshown.hi, 0.0);
+}
+
+TEST(TraceContent, IrResultsAreReusedOnlyForTheSameWindow) {
+    std::vector<std::complex<float>> v(1000, {1.0f, 1.0f});
+    PlotOptions o;
+    o.cmode = CMode::IR;
+    Screen s(std::make_unique<TraceContent>(std::vector<Signal>{Signal(v)}, o));
+    Framebuffer fb(300, 200);
+    render_headless(fb, s);
+    EXPECT_TRUE(s.content->reusable(*s.result, s.request()));
+    s.ir[0] = {0, 10};
+    EXPECT_FALSE(s.content->reusable(*s.result, s.request()));
 }
 
 TEST(TraceContent, AutoscaleCoversEveryVisibleTrace) {
     // Regression: the old code autoscaled from trace 0 only.
     std::vector<float> small(100, 1.0f), big(100, 50.0f);
     PlotOptions o;
-    Screen s(std::make_unique<TraceContent>(std::vector<Signal>{Signal(small, 0, 1), Signal(big, 200, 1)}, o), o);
+    Screen s(std::make_unique<TraceContent>(std::vector<Signal>{Signal(small, 0, 1), Signal(big, 200, 1)}, o));
     Framebuffer fb(400, 300);
     render_headless(fb, s);
     EXPECT_LE(s.views.top().x.lo, 0.0);

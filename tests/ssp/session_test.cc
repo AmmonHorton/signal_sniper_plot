@@ -15,6 +15,7 @@
 
 #include "app/compose.h"
 #include "app/job_runner.h"
+#include "app/raster_content.h"
 #include "render/png.h"
 
 namespace ssp {
@@ -76,7 +77,7 @@ bool same_plot_area(const Framebuffer& a, const Framebuffer& b, const Rect& p) {
 }
 
 Framebuffer headless(const std::vector<Signal>& sigs, const PlotOptions& o, int w, int h) {
-    Screen s(std::make_unique<TraceContent>(sigs, o), o);
+    Screen s(std::make_unique<TraceContent>(sigs, o));
     Framebuffer fb(w, h);
     render_headless(fb, s);
     return fb;
@@ -207,6 +208,78 @@ TEST(Session, MenuAndHelpLeaveNoTraceWhenClosed) {
     EXPECT_FALSE(same_plot_area(be.idle_frames[0], be.idle_frames[2], p)) << "menu is visible";
     EXPECT_FALSE(same_plot_area(be.idle_frames[0], be.idle_frames[4], p)) << "help is visible";
     EXPECT_TRUE(same_plot_area(be.idle_frames[0], be.idle_frames[5], p));
+}
+
+TEST(Session, IrKeyMatchesHeadlessIr) {
+    std::vector<std::complex<float>> v(300'000);
+    for (std::size_t i = 0; i < v.size(); ++i) v[i] = std::polar(1.0f + 0.1f * (i % 3), 0.001f * i);
+    const std::vector<Signal> sigs{Signal(v)};
+    InputEvent five{T::Key};
+    five.key = '5';
+    FakeBackend be(kW, kH);
+    be.script = {{five}};
+    run_plot(sigs, {}, be);
+    ASSERT_EQ(be.idle_frames.size(), 2u);
+    PlotOptions ir;
+    ir.cmode = CMode::IR;
+    EXPECT_TRUE(same_plot_area(be.idle_frames[1], headless(sigs, ir, kW, kH), compute_layout(kW, kH).plot));
+}
+
+std::vector<float> raster_data(std::size_t rows, std::size_t cols) {
+    std::vector<float> v(rows * cols);
+    for (std::size_t r = 0; r < rows; ++r)
+        for (std::size_t c = 0; c < cols; ++c) v[r * cols + c] = std::sin(r * 0.05f) * std::cos(c * 0.07f) + r * 0.01f;
+    return v;
+}
+
+TEST(SessionRaster, WindowMatchesHeadlessRaster) {
+    const auto v = raster_data(300, 400);
+    RasterOptions o;
+    o.subsize = 400;
+    FakeBackend be(kW, kH);
+    run_session(std::make_unique<RasterContent>(Signal(v), o), be);
+    ASSERT_EQ(be.idle_frames.size(), 1u);
+    Screen s(std::make_unique<RasterContent>(Signal(v), o));
+    Framebuffer want(kW, kH);
+    render_headless(want, s);
+    EXPECT_TRUE(same_plot_area(be.idle_frames[0], want, compute_layout(kW, kH, true).plot));
+}
+
+TEST(SessionRaster, CutIsIsolatedAndEscReturnsInstantly) {
+    const auto v = raster_data(300, 400);
+    RasterOptions o;
+    o.subsize = 400;
+    const Rect p = compute_layout(kW, kH, true).plot;
+    auto key = [](uint32_t k) {
+        InputEvent e{T::Key};
+        e.key = k;
+        return e;
+    };
+    class Counting : public FakeBackend {
+    public:
+        using FakeBackend::FakeBackend;
+        std::vector<int> busy_at_idle;
+        void wait_events(std::vector<InputEvent>& out, int timeout_ms, int fd) override {
+            if (timeout_ms < 0) busy_at_idle.push_back(busy_waits);
+            FakeBackend::wait_events(out, timeout_ms, fd);
+        }
+    } be(kW, kH);
+    be.script = {
+        {{T::Press, p.x + 40, p.y + 30, 1}, {T::Release, p.x + 200, p.y + 150, 1}, {T::Leave}},  // zoom raster
+        {{T::Motion, p.x + 100, p.y + 60}, key('x'), {T::Leave}},                               // x-cut
+        {{T::Press, p.x + 50, p.y + 20, 1}, {T::Release, p.x + 150, p.y + 120, 1}, key('3'), {T::Leave}},  // mess with the cut
+        {key(0xff56), {T::Leave}},                                                               // PgDn
+        {key(0xff55), {T::Leave}},                                                               // PgUp
+        {key(key::kEscape)},                                                                     // leave the cut
+    };
+    run_session(std::make_unique<RasterContent>(Signal(v), o), be);
+    ASSERT_EQ(be.idle_frames.size(), 7u);
+    const auto& f = be.idle_frames;
+    EXPECT_FALSE(same_plot_area(f[1], f[2], p)) << "the cut is showing";
+    EXPECT_FALSE(same_plot_area(f[3], f[4], p)) << "PgDn shows the next row";
+    EXPECT_TRUE(same_plot_area(f[3], f[5], p)) << "PgUp comes back, keeping the cut's zoom";
+    EXPECT_TRUE(same_plot_area(f[1], f[6], p)) << "the raster is exactly as it was";
+    EXPECT_EQ(be.busy_at_idle[6], be.busy_at_idle[5]) << "returning to the raster recomputes nothing";
 }
 
 TEST(Session, ResizeReflowsToTheNewSize) {

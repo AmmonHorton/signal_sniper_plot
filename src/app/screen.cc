@@ -1,25 +1,47 @@
 #include "app/screen.h"
 
+#include "app/raster_content.h"
+
 namespace ssp {
 
-Screen::Screen(std::unique_ptr<TraceContent> c, const PlotOptions& o)
-    : content(std::move(c)), opts(o) {
-    set.title = o.title;
-    set.cmode = content->initial_cmode();
-    set.phunits = o.phunits;
-    set.index = o.index;
-    set.grid = o.grid;
-    set.legend = o.legend;
-    set.thickness = o.thickness;
+Screen::Screen(std::unique_ptr<Content> c) : content(std::move(c)) {
+    set = content->initial_settings();
+    if (TraceContent* t = traces(); t && set.cmode == CMode::IR) ir = t->initial_ir();
     go_home();
 }
 
-View Screen::home() const {
-    View v;
-    const bool original_axes = set.index == opts.index;
-    v.x = (original_axes && opts.xrange) ? *opts.xrange : content->x_extent(set.index);
-    if (opts.yrange && set.cmode == content->initial_cmode()) v.y = *opts.yrange;
-    return v;
+Range Screen::x_for(int done) const {
+    if (!views.top().auto_x) return views.top().x;
+    return (result && done > 0 && result->x) ? *result->x : xshown;
+}
+
+const RasterContent* Screen::raster() const {
+    return dynamic_cast<const RasterContent*>(content.get());
+}
+
+Range Screen::z_for(int done) const {
+    if (set.zfixed) return *set.zfixed;
+    if (!result) return zshown;
+    const Span e = content->extent(*result, done);
+    if (e.empty()) return zshown;
+    return e.hi > e.lo ? Range{e.lo, e.hi} : Range{e.lo - 1.0, e.hi + 1.0};
+}
+
+Range Screen::level_x(const View& v) const {
+    if (!v.auto_x) return v.x;
+    return (v.cache && v.cache->complete() && v.cache->x) ? *v.cache->x : xshown;
+}
+
+ReduceRequest Screen::request() const {
+    const View& v = views.top();
+    ReduceRequest q;
+    q.view = xview();
+    q.index = set.index;
+    q.auto_x = v.auto_x;
+    q.y = v.y;
+    q.reduce = set.reduce;
+    if (set.cmode == CMode::IR) q.ir = ir;
+    return q;
 }
 
 Range Screen::y_for(int done) const {
@@ -36,12 +58,13 @@ XView Screen::xview() const {
 }
 
 double Screen::px_to_x(int px) const {
-    const Range x = views.top().x;
+    const Range x = xshown;
     return x.lo + (px - layout.plot.x + 0.5) / layout.plot.w * (x.hi - x.lo);
 }
 
 double Screen::py_to_y(int py) const {
-    return yshown.hi - (py - layout.plot.y + 0.5) / layout.plot.h * (yshown.hi - yshown.lo);
+    const double f = (py - layout.plot.y + 0.5) / layout.plot.h * (yshown.hi - yshown.lo);
+    return ydown() ? yshown.lo + f : yshown.hi - f;
 }
 
 }  // namespace ssp
