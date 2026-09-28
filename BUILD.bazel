@@ -2,7 +2,7 @@
 
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
 load("@pybind11_bazel//:build_defs.bzl", "pybind_extension")
-load("@rules_python//python:defs.bzl", "py_binary")
+load("@rules_python//python:defs.bzl", "py_binary", "py_test")
 load("@rules_python//python:packaging.bzl", "py_wheel")
 load("@rules_python//python:pip.bzl", "compile_pip_requirements")
 
@@ -50,39 +50,73 @@ cc_library(
     visibility = ["//visibility:public"],
 )
 
-# ── ssp: new core (phase 1, headless; see docs/ARCHITECTURE_PROPOSAL.md) ────
-# No X11 dependency: everything here builds and tests without a display.
+# ── ssp: new implementation (see docs/ARCHITECTURE_PROPOSAL.md) ──────────────
+# ssp_core has no X11 dependency: it builds, renders and runs the whole interactive loop
+# (against a fake backend) without a display. ssp adds the X11 window.
 
 cc_library(
     name = "ssp_core",
     srcs = [
-        "src/api/plot.cc",
+        "src/api/save_png.cc",
+        "src/app/compose.cc",
+        "src/app/controller.cc",
+        "src/app/job_runner.cc",
+        "src/app/menu.cc",
+        "src/app/overlay.cc",
+        "src/app/screen.cc",
+        "src/app/session.cc",
+        "src/app/trace_content.cc",
         "src/core/lod.cc",
         "src/render/axis.cc",
         "src/render/frame.cc",
         "src/render/framebuffer.cc",
         "src/render/png.cc",
         "src/render/trace.cc",
-        "src/render/trace_plot.cc",
     ],
     hdrs = [
         "inc/ssp/plot.h",
         "inc/ssp/types.h",
+        "src/app/compose.h",
+        "src/app/controller.h",
+        "src/app/job_runner.h",
+        "src/app/menu.h",
+        "src/app/overlay.h",
+        "src/app/screen.h",
+        "src/app/session.h",
+        "src/app/settings.h",
+        "src/app/trace_content.h",
         "src/core/cancel.h",
         "src/core/component.h",
         "src/core/dispatch.h",
         "src/core/lod.h",
+        "src/core/scan.h",
+        "src/platform/backend.h",
         "src/render/axis.h",
         "src/render/frame.h",
         "src/render/framebuffer.h",
         "src/render/png.h",
         "src/render/trace.h",
-        "src/render/trace_plot.h",
     ],
     textual_hdrs = ["src/render/font_6x13.inc"],
     copts = _COPTS,
     includes = ["inc", "src"],
+    linkopts = ["-lpthread"],
     deps = ["@zlib"],
+    visibility = ["//visibility:public"],
+)
+
+# Public C++ library: ssp::plot / ssp::Session (X11 window) and ssp::save_png.
+cc_library(
+    name = "ssp",
+    srcs = [
+        "src/api/plot.cc",
+        "src/platform/x11_backend.cc",
+    ],
+    copts = _COPTS,
+    deps = [
+        ":ssp_core",
+        "@system_libs//:x11",
+    ],
     visibility = ["//visibility:public"],
 )
 
@@ -90,8 +124,10 @@ cc_test(
     name = "ssp_core_test",
     srcs = [
         "tests/ssp/axis_test.cc",
+        "tests/ssp/controller_test.cc",
         "tests/ssp/framebuffer_test.cc",
         "tests/ssp/lod_test.cc",
+        "tests/ssp/session_test.cc",
         "tests/ssp/trace_test.cc",
     ],
     copts = _COPTS,
@@ -101,11 +137,32 @@ cc_test(
     ],
 )
 
+# Needs an X display; skips without one:  DISPLAY=:99 bazel test //:ssp_x11_test --test_env=DISPLAY
+cc_test(
+    name = "ssp_x11_test",
+    srcs = ["tests/ssp/x11_backend_test.cc"],
+    copts = _COPTS,
+    tags = ["manual"],
+    deps = [
+        ":ssp",
+        "@googletest//:gtest_main",
+        "@system_libs//:x11",
+    ],
+)
+
 cc_binary(
     name = "ssp_bench",
     srcs = ["tools/ssp_bench.cc"],
     copts = _COPTS,
     deps = [":ssp_core"],
+)
+
+# Interactive demo (needs a display):  bazel run -c opt //:ssp_demo -- [samples]
+cc_binary(
+    name = "ssp_demo",
+    srcs = ["tools/ssp_demo.cc"],
+    copts = _COPTS,
+    deps = [":ssp"],
 )
 
 # Golden-image tests. On mismatch the actual image lands in bazel-testlogs/.../outputs.
@@ -141,7 +198,7 @@ pybind_extension(
     name = "signal_sniper_plot_py",
     srcs = ["pybind_src/module.cc"],
     copts = _COPTS,
-    deps = [":signal_sniper_plot"],
+    deps = [":ssp"],
     visibility = ["//visibility:public"],
 )
 
@@ -191,6 +248,17 @@ py_binary(
     name = "test_plot_py",
     srcs = ["python/test_plot.py"],
     main = "python/test_plot.py",
+    deps = [
+        ":signal_sniper_plot_py",
+        "@pip_deps//numpy",
+    ],
+)
+
+# Headless tests of the Python bindings.
+py_test(
+    name = "ssp_py_test",
+    srcs = ["python/test_ssp.py"],
+    main = "python/test_ssp.py",
     deps = [
         ":signal_sniper_plot_py",
         "@pip_deps//numpy",

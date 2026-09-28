@@ -7,7 +7,7 @@
 #include <cstdlib>
 #include <vector>
 
-#include "render/trace_plot.h"
+#include "app/compose.h"
 
 using Clock = std::chrono::steady_clock;
 
@@ -22,24 +22,55 @@ int main(int argc, char** argv) {
     std::printf("%zu complex64 samples (%.1f GB)\n", n, n * 8 / 1e9);
 
     ssp::Framebuffer fb(1920, 1080);
-    // One TracePlot kept across renders so its pyramid is reused, as the interactive app will.
-    ssp::TracePlot p({ssp::Signal(v)}, {});
+    // One Screen kept across renders so its pyramid is reused, as the interactive app does.
+    ssp::PlotOptions o;
+    ssp::Screen s(std::make_unique<ssp::TraceContent>(std::vector<ssp::Signal>{ssp::Signal(v)}, o), o);
     auto t0 = Clock::now();
-    p.render(fb);
+    ssp::render_headless(fb, s);
     std::printf("  %-44s %9.1f ms\n", "first full view (scan + build pyramid)", ms_since(t0));
     t0 = Clock::now();
-    p.render(fb);
+    ssp::render_headless(fb, s);
     std::printf("  %-44s %9.1f ms\n", "full view again (pyramid)", ms_since(t0));
 
-    const ssp::XView full{0.0, double(n - 1), 1920 - 88, ssp::CMode::Mag, ssp::PhaseUnits::Radians};
+    ssp::XView z = s.xview();
     for (double frac : {0.5, 0.01, 1e-4, 1e-6}) {
-        ssp::XView z = full;
         z.x0 = 0.3 * n;
         z.x1 = z.x0 + frac * n;
+        auto r = s.content->new_result(z, false);
         t0 = Clock::now();
-        p.reduce(z);
+        s.content->reduce(*r, {});
         char label[64];
         std::snprintf(label, sizeof label, "reduce zoom to %g of data", frac);
         std::printf("  %-44s %9.1f ms\n", label, ms_since(t0));
+    }
+
+    // Dots mode reads every sample in view to light only rows that hold samples.
+    uint32_t st = 1;
+    for (auto& x : v) {
+        st = st * 1664525u + 1013904223u;
+        x = std::polar(1.0f, float(M_PI / 4 + (st >> 30) * M_PI / 2));  // QPSK
+    }
+    std::printf("QPSK, phase mode:\n");
+    for (ssp::Style style : {ssp::Style::Lines, ssp::Style::Dots}) {
+        ssp::Signal sig(v);
+        sig.style = style;
+        ssp::PlotOptions po;
+        po.cmode = ssp::CMode::Phase;
+        ssp::Screen q(std::make_unique<ssp::TraceContent>(std::vector<ssp::Signal>{sig}, po), po);
+        const char* name = style == ssp::Style::Dots ? "dots " : "lines";
+        for (const char* when : {"first view", "again"}) {
+            t0 = Clock::now();
+            ssp::render_headless(fb, q);
+            std::printf("  %s %-38s %9.1f ms\n", name, when, ms_since(t0));
+        }
+        for (double frac : {0.01, 1e-4}) {
+            ssp::XView zz = q.xview();
+            zz.x0 = 0.3 * n;
+            zz.x1 = zz.x0 + frac * n;
+            auto r = q.content->new_result(zz, false);
+            t0 = Clock::now();
+            q.content->reduce(*r, {});
+            std::printf("  %s zoom to %-30g %9.1f ms\n", name, frac, ms_since(t0));
+        }
     }
 }

@@ -144,5 +144,20 @@ TEST(Lod, PhaseUsesAtan2ImagReal) {
     EXPECT_DOUBLE_EQ(sample_value(Signal(v), Comp::Phase, 0), M_PI / 2);
 }
 
+TEST(Component, FastAtan2IsWithinTwoMicroradians) {
+    double worst = 0.0;
+    for (int i = 0; i <= 100'000; ++i) {
+        const double t = -M_PI + 2 * M_PI * i / 100'000;
+        for (double r : {1e-6, 1.0, 1e9}) {
+            const double x = r * std::cos(t), y = r * std::sin(t);
+            worst = std::max(worst, std::abs(fast_atan2(y, x) - std::atan2(y, x)));
+        }
+    }
+    EXPECT_LT(worst, 2e-6);
+    EXPECT_EQ(fast_atan2(0.0, 0.0), 0.0);
+    EXPECT_DOUBLE_EQ(fast_atan2(0.0, -1.0), M_PI);
+    EXPECT_DOUBLE_EQ(fast_atan2(-1.0, 0.0), -M_PI / 2);
+}
+
 }  // namespace
 }  // namespace ssp

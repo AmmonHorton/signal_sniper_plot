@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "render/png.h"
-#include "render/trace_plot.h"
+#include "app/compose.h"
 
 namespace ssp {
 namespace {
@@ -46,7 +46,8 @@ void check_golden(const std::string& name, const Framebuffer& fb) {
 
 Framebuffer render(std::vector<Signal> sigs, PlotOptions o) {
     Framebuffer fb(kW, kH);
-    TracePlot(std::move(sigs), std::move(o)).render(fb);
+    Screen s(std::make_unique<TraceContent>(std::move(sigs), o), o);
+    render_headless(fb, s);
     return fb;
 }
 

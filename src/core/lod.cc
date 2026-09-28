@@ -4,41 +4,10 @@
 #include <cmath>
 
 #include "core/dispatch.h"
+#include "core/scan.h"
 
 namespace ssp {
 namespace {
-
-constexpr std::size_t kCheckEvery = 1 << 16;  // samples between cancellation checks
-
-template <class T, bool Cplx, Comp C>
-Span scan_t(const T* p, std::ptrdiff_t stride, std::size_t i0, std::size_t i1,
-            const CancelToken& ct) {
-    Span s;
-    const std::ptrdiff_t step = Cplx ? 2 * stride : stride;
-    for (std::size_t chunk = i0; chunk < i1; chunk += kCheckEvery) {
-        ct.check();
-        const std::size_t end = std::min(i1, chunk + kCheckEvery);
-        const T* q = p + static_cast<std::ptrdiff_t>(chunk) * step;
-        for (std::size_t i = chunk; i < end; ++i, q += step) {
-            const double re = static_cast<double>(q[0]);
-            const double im = Cplx ? static_cast<double>(q[1]) : 0.0;
-            s.add(comp_value<C>(re, im));
-        }
-    }
-    return s;
-}
-
-template <class T, bool Cplx>
-Span scan_comp(const T* p, std::ptrdiff_t stride, Comp c, std::size_t i0, std::size_t i1,
-               const CancelToken& ct) {
-    switch (c) {
-        case Comp::Re:    return scan_t<T, Cplx, Comp::Re>(p, stride, i0, i1, ct);
-        case Comp::Im:    return scan_t<T, Cplx, Comp::Im>(p, stride, i0, i1, ct);
-        case Comp::Mag:   return scan_t<T, Cplx, Comp::Mag>(p, stride, i0, i1, ct);
-        case Comp::Phase: return scan_t<T, Cplx, Comp::Phase>(p, stride, i0, i1, ct);
-    }
-    return {};
-}
 
 /// For real data, Im and Phase follow exactly from the real span (Im is 0; the phase is 0
 /// or pi depending on sign), so they need no pass over the samples. |x| does not: a span
@@ -77,14 +46,9 @@ double sample_value(const Signal& s, Comp c, std::size_t i) {
 }
 
 Span scan(const Signal& s, Comp c, std::size_t i0, std::size_t i1, const CancelToken& ct) {
-    i1 = std::min(i1, s.n);
-    if (i0 >= i1) return {};
-    return dispatch(s.dtype, [&](auto tag) {
-        using T = typename decltype(tag)::type;
-        const T* p = static_cast<const T*>(s.data);
-        return s.complex ? scan_comp<T, true>(p, s.stride, c, i0, i1, ct)
-                         : scan_comp<T, false>(p, s.stride, c, i0, i1, ct);
-    });
+    Span out;
+    for_each_value(s, c, i0, i1, ct, [&out](double v) { out.add(v); });
+    return out;
 }
 
 Lod::Pyramid& Lod::pyramid(Comp c) {
