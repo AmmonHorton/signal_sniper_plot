@@ -1,6 +1,6 @@
 """Top-level Bazel build targets for signal_sniper_plot."""
 
-load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
 load("@pybind11_bazel//:build_defs.bzl", "pybind_extension")
 load("@rules_python//python:defs.bzl", "py_binary")
 load("@rules_python//python:packaging.bzl", "py_wheel")
@@ -48,6 +48,77 @@ cc_library(
         ":trace_utils",
     ],
     visibility = ["//visibility:public"],
+)
+
+# ── ssp: new core (phase 1, headless; see docs/ARCHITECTURE_PROPOSAL.md) ────
+# No X11 dependency: everything here builds and tests without a display.
+
+cc_library(
+    name = "ssp_core",
+    srcs = [
+        "src/api/plot.cc",
+        "src/core/lod.cc",
+        "src/render/axis.cc",
+        "src/render/frame.cc",
+        "src/render/framebuffer.cc",
+        "src/render/png.cc",
+        "src/render/trace.cc",
+        "src/render/trace_plot.cc",
+    ],
+    hdrs = [
+        "inc/ssp/plot.h",
+        "inc/ssp/types.h",
+        "src/core/cancel.h",
+        "src/core/component.h",
+        "src/core/dispatch.h",
+        "src/core/lod.h",
+        "src/render/axis.h",
+        "src/render/frame.h",
+        "src/render/framebuffer.h",
+        "src/render/png.h",
+        "src/render/trace.h",
+        "src/render/trace_plot.h",
+    ],
+    textual_hdrs = ["src/render/font_6x13.inc"],
+    copts = _COPTS,
+    includes = ["inc", "src"],
+    deps = ["@zlib"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "ssp_core_test",
+    srcs = [
+        "tests/ssp/axis_test.cc",
+        "tests/ssp/framebuffer_test.cc",
+        "tests/ssp/lod_test.cc",
+        "tests/ssp/trace_test.cc",
+    ],
+    copts = _COPTS,
+    deps = [
+        ":ssp_core",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_binary(
+    name = "ssp_bench",
+    srcs = ["tools/ssp_bench.cc"],
+    copts = _COPTS,
+    deps = [":ssp_core"],
+)
+
+# Golden-image tests. On mismatch the actual image lands in bazel-testlogs/.../outputs.
+# To accept new images:  SSP_UPDATE_GOLDENS=1 bazel run //:ssp_golden_test
+cc_test(
+    name = "ssp_golden_test",
+    srcs = ["tests/ssp/golden_test.cc"],
+    copts = _COPTS,
+    data = glob(["tests/golden/*.png"], allow_empty = True),
+    deps = [
+        ":ssp_core",
+        "@googletest//:gtest_main",
+    ],
 )
 
 # ── Unit tests ────────────────────────────────────────────────────────────────
