@@ -28,8 +28,9 @@ jobs:
 
       # Build the wheel. The output is a linux_x86_64 wheel; auditwheel will
       # repair it in the next step.
+      # -c opt: the default fastbuild mode is unoptimised (4-5x slower plots).
       - name: Build wheel
-        run: bazel build //:signal_sniper_plot_wheel
+        run: bazel build -c opt //:signal_sniper_plot_wheel
 
       # auditwheel bundles libsignal_sniper_plot.so into the wheel and
       # re-tags it with the appropriate manylinux platform string.
@@ -39,7 +40,7 @@ jobs:
           pip install auditwheel
           mkdir -p dist
           auditwheel repair --wheel-dir dist/ \
-            $(bazel cquery --output=files //:signal_sniper_plot_wheel)
+            $(bazel cquery -c opt --output=files //:signal_sniper_plot_wheel)
 
       - name: Check wheel
         run: |
