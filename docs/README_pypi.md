@@ -1,10 +1,12 @@
 # signal_sniper_plot_py
 
-An interactive X11 DSP plotting library for Python. Pass a NumPy array, get a live, zoomable signal window — designed for real-time debugging of DSP pipelines.
+Fast interactive DSP plots for NumPy, in the spirit of XMidas `xplot` / `xraster` and SigPlot.
+Pass an array, get a zoomable X11 window. Arrays of any size are read in place (no copies,
+`np.memmap` works); the first view of a huge array renders progressively and every view after
+that takes milliseconds.
 
-Backed by a C++ rendering engine with per-trace streaming, a decimation cache, and full zoom/pan/mode switching from the window UI.
-
-> **Requires a live X11 display** (`DISPLAY` must be set). Works natively on Linux and under WSL2 with an X server (e.g. VcXsrv, X410).
+> **Requires an X11 display** (`DISPLAY` must be set): Linux, WSL2 (WSLg or an X server such
+> as VcXsrv), or `ssh -X`. `save_png` / `save_raster_png` need no display.
 
 ---
 
@@ -14,11 +16,8 @@ Backed by a C++ rendering engine with per-trace streaming, a decimation cache, a
 pip install signal_sniper_plot_py
 ```
 
-**System requirement:** `libX11` must be present on the host. On Ubuntu/Debian:
-
-```sh
-sudo apt install libx11-dev
-```
+Linux x86_64, Python 3.12. `libX11` must be installed (it is on any desktop Linux;
+`sudo apt install libx11-6` or `sudo dnf install libX11` otherwise).
 
 ---
 
@@ -26,152 +25,124 @@ sudo apt install libx11-dev
 
 ```python
 import numpy as np
-from signal_sniper_plot_py import plot_buffer
+import signal_sniper_plot_py as ssp
 
-# Plot a simple sine wave
-t = np.linspace(0, 1, 4096, dtype=np.float32)
-plot_buffer(np.sin(2 * np.pi * 50 * t), xdelta=1/4096, plot_title="50 Hz sine")
+fs = 1e6
+t = np.arange(1_000_000) / fs
+iq = np.exp(2j * np.pi * 1e3 * t).astype(np.complex64)
+
+ssp.plot(iq, xdelta=1 / fs, title="1 kHz tone")          # line plot (xplot)
+
+spec = np.abs(np.fft.fft(iq.reshape(1000, 1000), axis=1))
+ssp.raster(spec, cmode="20log", title="spectrogram")      # image (xraster)
 ```
 
-```python
-# Plot a complex IQ signal
-iq = (np.random.randn(1024) + 1j * np.random.randn(1024)).astype(np.complex64)
-plot_buffer(iq, xdelta=0.001, plot_title="IQ noise")
-```
-
-```python
-# Two interleaved traces in one array
-data = np.concatenate([signal_a, signal_b])   # shape: (2*N,)
-plot_buffer(data, num_traces=2, plot_title="A vs B")
-```
+Each call opens a window and returns when it is closed (Ctrl-C closes it too).
 
 ---
 
-## API reference
-
-### `plot_buffer`
+## Line plots: `plot`
 
 ```python
-plot_buffer(
-    data,
-    xstart=0.0,
-    xdelta=1.0,
-    plot_title="Plot",
-    line_thickness=2,
-    y_range=None,
-    x_range=None,
-    num_traces=1,
-)
+ssp.plot(*data, title="", cmode="auto", xstart=0.0, xdelta=1.0, names=None,
+         xrange=None, yrange=None, index=False, thickness=1, grid=True, legend=True,
+         phunits="rad", width=1000, height=600)
 ```
 
-Opens a blocking interactive plot window. Returns when the window is closed.
+`data` is any number of:
 
-#### Parameters
+- 1-D arrays — one trace each;
+- 2-D arrays — one trace per row;
+- `ssp.Signal` objects — a trace with its own x axis and style;
+- lists of the above.
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `data` | `np.ndarray` | — | 1-D C-contiguous array of samples. See supported dtypes below. |
-| `xstart` | `float` | `0.0` | X-axis value assigned to the first sample. |
-| `xdelta` | `float` | `1.0` | X-axis increment between consecutive samples (e.g. `1/sample_rate`). |
-| `plot_title` | `str` | `"Plot"` | Text shown in the window title bar and above the plot area. |
-| `line_thickness` | `int` | `2` | Pixel thickness for line traces; dot radius for DOTS-style traces. |
-| `y_range` | `(float, float) \| None` | `None` | Fix the Y-axis to `(min, max)`. Auto-scales from data when `None`. |
-| `x_range` | `(float, float) \| None` | `None` | Fix the X-axis to `(min, max)`. Auto-scales from data when `None`. |
-| `num_traces` | `int` | `1` | Number of traces interleaved in `data`. The array is split evenly: trace 0 occupies `data[0:N]`, trace 1 `data[N:2N]`, etc. |
+`xstart`/`xdelta` apply to bare arrays. A `Signal` carries its own:
 
-#### Supported dtypes
+```python
+ssp.plot(ssp.Signal(rx, xstart=0.0, xdelta=1 / fs, name="rx"),
+         ssp.Signal(tx, xstart=2e-3, xdelta=1 / fs, name="tx", style="dots", color="#ff8000"),
+         title="rx vs tx", cmode="real", yrange=(-1.5, 1.5))
+```
 
-| NumPy dtype | Interpreted as |
+| Option | Meaning |
 |---|---|
-| `float32` | Real samples (32-bit float) |
-| `float64` | Real samples (64-bit double) |
-| `int16` | Real samples (16-bit integer) |
-| `int32` | Real samples (32-bit integer) |
-| `int64` | Real samples (64-bit integer) |
-| `complex64` | Interleaved real + imag (2 × float32) |
-| `complex128` | Interleaved real + imag (2 × float64) |
+| `cmode` | `auto` (real data: `real`, complex: `mag`), `mag`, `phase`, `real`, `imag`, `ir` (imag vs real), `10log`, `20log` |
+| `xrange`, `yrange` | Fixed `(lo, hi)` view; autoscaled when `None` |
+| `index` | x axis in sample numbers instead of `xstart + i*xdelta` |
+| `names` | Legend names for the traces, in order |
+| `phunits` | Phase units: `rad`, `deg`, `cycles` |
+
+`Signal(data, xstart=0.0, xdelta=1.0, name="", style="lines", color=None, thickness=0, visible=True)`
+— `style` is `lines`, `dots` or `both`; `color` is `0xRRGGBB` or `"#RRGGBB"`.
 
 ---
 
-## Window controls
-
-Once the plot window is open:
-
-| Action | Effect |
-|---|---|
-| Left-drag | Zoom into the selected rectangle (up to 5 levels) |
-| Right-click (plot area) | Step back out one zoom level |
-| Middle-click | Pause / resume the streaming render |
-| Left-click legend swatch | Toggle trace visibility |
-| Right-click legend swatch | Toggle trace style: LINES ↔ DOTS |
-
-### Toolbar buttons
-
-| Button | Effect |
-|---|---|
-| **Save PNG** | Saves the current view to `plot_out.ppm` |
-| **Cycle X-Axis** | Toggle x-axis labels between time values and sample indices |
-| **Magnitude** | Display √(re² + im²) |
-| **Real** | Display real component only |
-| **Imag** | Display imaginary component only |
-| **Phase** | Display atan2(re, im) in radians |
-| **Imag vs Real** | I/Q scatter plot |
-
----
-
-## Examples
-
-### Fixed axes with a complex signal
+## Rasters: `raster`
 
 ```python
-import numpy as np
-from signal_sniper_plot_py import plot_buffer
-
-fs = 10_000          # sample rate, Hz
-N  = 50_000
-t  = np.arange(N) / fs
-
-# Chirp: frequency sweeps from 100 Hz to 2 kHz
-f  = np.linspace(100, 2000, N)
-iq = np.exp(1j * 2 * np.pi * np.cumsum(f) / fs).astype(np.complex64)
-
-plot_buffer(
-    iq,
-    xstart=0.0,
-    xdelta=1/fs,
-    plot_title="Chirp",
-    y_range=(-1.1, 1.1),
-)
+ssp.raster(data, subsize=None, xstart=0.0, xdelta=1.0, ystart=0.0, ydelta=1.0, title="",
+           cmode="auto", xrange=None, yrange=None, zrange=None, cmap="ramp", reduce="max",
+           index=False, grid=False, phunits="rad", width=1000, height=600)
 ```
 
-### Comparing two signals
+- `data` is a 2-D array with one frame per row, or a 1-D array with `subsize=` samples per
+  frame. Strided views (`a[::2, 10:500]`) are read in place.
+- Frame 0 is drawn at the top. Columns use `xstart`/`xdelta`; frames use `ystart`/`ydelta`.
 
-```python
-import numpy as np
-from signal_sniper_plot_py import plot_buffer
+| Option | Meaning |
+|---|---|
+| `zrange` | Fixed colour range `(lo, hi)`; autoscaled when `None` |
+| `cmap` | `greyscale`, `ramp`, `colorwheel`, `spectrum`, `calewhite`, `hotdesat`, `sunset`, `hot`, `cold` |
+| `reduce` | How a pixel combines the samples under it when zoomed out: `max`, `min`, `mean`, `maxabs`, `first` |
 
-N     = 8192
-t     = np.linspace(0, 1, N, dtype=np.float32)
-clean = np.sin(2 * np.pi * 440 * t)
-noisy = clean + 0.3 * np.random.randn(N).astype(np.float32)
-
-# Interleave: [clean_0, clean_1, ..., noisy_0, noisy_1, ...]
-plot_buffer(
-    np.concatenate([clean, noisy]),
-    num_traces=2,
-    xdelta=1/N,
-    plot_title="Clean vs Noisy",
-    y_range=(-2.0, 2.0),
-)
-```
+**Cuts:** in a raster window, `x` / `y` open a line plot of the row / column under the
+pointer, limited to the current zoom box. It behaves like any `plot` window, and nothing done
+in it changes the raster. `PgUp`/`PgDn` step to the neighbouring row/column; `Esc` returns.
 
 ---
 
-## Requirements
+## Without a display: `save_png`, `save_raster_png`
 
-- Python >= 3.10
-- NumPy
-- Linux with `libX11` and a running X11 display (`$DISPLAY`)
+```python
+ssp.save_png("tone.png", iq, xdelta=1 / fs, title="1 kHz tone")
+ssp.save_raster_png("spec.png", spec, cmode="20log")
+```
+
+Same arguments as `plot` / `raster`, after the output path.
+
+---
+
+## In the window
+
+Press `?` for the full list, or middle-click (or `m`) for the menu.
+
+| Input | Action |
+|---|---|
+| Left drag | Zoom to the box (right-click steps back out; `Home` unzooms fully) |
+| Wheel | Zoom x around the pointer (Shift: y, Ctrl: both) |
+| Shift + left drag, arrows | Pan |
+| Left click | Set a marker; the readout then shows dx / dy from it |
+| `1` … `7` | Magnitude, Phase, Real, Imag, Imag vs Real, 10·log10, 20·log10 |
+| Legend click | Show / hide a trace (right-click: lines → dots → both) |
+| `l`, `g`, `i`, `a` | Legend, grid, index x axis, readout x / index / 1/x |
+| `c`, `[` `]` | Raster colormap; slide the colour range |
+| Any click, `Esc` / `Space` | Stop / resume a render in progress |
+| `Ctrl-S`, `q` | Save PNG, quit |
+
+---
+
+## Data types
+
+Any of `int8`, `uint8`, `int16`, `uint16`, `int32`, `uint32`, `int64`, `uint64`, `float32`,
+`float64`, `complex64`, `complex128` and `bool`, in any byte order.
+`float16` and `complex256` are rejected.
+
+---
+
+## Earlier API
+
+`plot_buffer(data, xstart, xdelta, plot_title, line_thickness, y_range, x_range, num_traces)`
+from 1.x still works and opens the new window; `plot` is the replacement.
 
 ---
 
