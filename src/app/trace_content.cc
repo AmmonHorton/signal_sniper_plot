@@ -59,7 +59,9 @@ Settings TraceContent::initial_settings() const {
     s.phunits = opts_.phunits;
     s.index = opts_.index;
     s.grid = opts_.grid;
-    s.legend = opts_.legend;
+    // Shown by default only when it says something (several traces, or a named one); the
+    // 'l' key shows it regardless.
+    s.legend = opts_.legend && show_legend_;
     s.thickness = opts_.thickness;
     return s;
 }
@@ -85,6 +87,10 @@ bool TraceContent::any_complex() const {
         if (s.complex) return true;
     }
     return false;
+}
+
+void TraceContent::set_style(Style st) {
+    for (auto& s : sigs_) s.style = st;
 }
 
 void TraceContent::cycle_style(std::size_t i) {
@@ -238,7 +244,6 @@ void TraceContent::paint(Framebuffer& fb, const ReduceResult& r, const PaintArgs
 
 std::vector<LegendEntry> TraceContent::legend(const Theme& th) const {
     std::vector<LegendEntry> out;
-    if (!show_legend_) return out;
     for (std::size_t i = 0; i < sigs_.size(); ++i) {
         const Signal& s = sigs_[i];
         out.push_back({s.name, s.color.value_or(th.trace_color(i)), s.style, s.visible});

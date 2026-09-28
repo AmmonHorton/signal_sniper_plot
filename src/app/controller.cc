@@ -350,6 +350,13 @@ unsigned toggle_trace(Screen& s, std::size_t t) {
     return show ? kReduce : kRepaint;  // hidden traces have no bins
 }
 
+unsigned set_style(Screen& s, Style st) {
+    TraceContent* tc = s.traces();
+    if (!tc) return kNone;
+    tc->set_style(st);
+    return st == Style::Dots ? kReduce : kRepaint;  // dots need exact pixel rows
+}
+
 unsigned toggle_index(Screen& s) {
     s.set.index = !s.set.index;  // different x coordinates: back to home
     s.ui.marker.reset();

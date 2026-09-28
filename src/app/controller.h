@@ -31,6 +31,8 @@ namespace action {
 unsigned set_mode(Screen& s, CMode m);
 unsigned set_phunits(Screen& s, PhaseUnits u);
 unsigned toggle_trace(Screen& s, std::size_t t);
+/// @brief Lines, dots or both for every trace.
+unsigned set_style(Screen& s, Style st);
 unsigned toggle_index(Screen& s);
 unsigned unzoom_all(Screen& s);
 unsigned autoscale_y(Screen& s);

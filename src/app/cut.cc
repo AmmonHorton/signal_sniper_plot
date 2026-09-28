@@ -34,7 +34,7 @@ Built build(const CutInfo& c) {
         b.signal.xstart = static_cast<double>(c.span.first);
         b.signal.xdelta = 1.0;
     }
-    b.signal.name.clear();
+    b.signal.name = (c.xcut ? "row " : "column ") + std::to_string(c.index);
     b.title = (raster_title.empty() ? std::string() : raster_title + " - ") +
               (c.xcut ? "x-cut " : "y-cut ") + where;
     return b;

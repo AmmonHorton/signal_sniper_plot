@@ -50,6 +50,7 @@ const char* const kHelp[] = {
     "  Space / Esc      resume / stop rendering",
     "  i                index x-axis",
     "  g  l             grid, legend",
+    "                   (menu > Style: lines / dots for every trace)",
     "  m                menu (also: x/y range, phase units, traces)",
     "  Ctrl-S           save PNG",
     "  q                quit",

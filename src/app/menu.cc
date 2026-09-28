@@ -154,7 +154,15 @@ std::vector<MenuItem> build_menu(const Screen& s) {
         items.push_back({"Cut here", "", false, {},
                          {toggle("Row (x-cut)", "x", false, [mx, my](Screen& sc) { return action::request_cut(sc, true, mx, my); }),
                           toggle("Column (y-cut)", "y", false, [mx, my](Screen& sc) { return action::request_cut(sc, false, mx, my); })}});
-    } else if (!traces.empty()) {
+    } else if (tc) {
+        auto style = [&](const char* label, Style st) {
+            bool all = true;
+            for (std::size_t t = 0; t < tc->size(); ++t) all = all && tc->signal(t).style == st;
+            return toggle(label, "", all, [st](Screen& sc) { return action::set_style(sc, st); });
+        };
+        items.push_back({"Style", "", false, {},
+                         {style("Lines", Style::Lines), style("Dots", Style::Dots),
+                          style("Lines + dots", Style::LinesDots)}});
         items.push_back({"Traces", "", false, {}, traces});
     }
     if (s.cut) {

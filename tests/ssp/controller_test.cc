@@ -347,5 +347,29 @@ TEST_F(ControllerTest, AKeyCyclesReadout) {
     EXPECT_EQ(s().set.absc, Absc::X);
 }
 
+TEST_F(ControllerTest, LegendKeyShowsASingleUnnamedTrace) {
+    make({Signal(a_)});  // one unnamed trace: no legend at first
+    EXPECT_FALSE(s().set.legend);
+    EXPECT_TRUE(s().legend_hits.empty());
+    EXPECT_TRUE(handle_event(s(), key('l'), false) & kRepaint);
+    render_headless(fb_, s());
+    ASSERT_EQ(s().legend_hits.size(), 1u) << "'l' shows it anyway";
+    const Rect r = s().legend_hits[0];
+    EXPECT_TRUE(handle_event(s(), press(r.x + 2, r.y + 2, 3), false) & kReduce);
+    EXPECT_EQ(s().traces()->signal(0).style, Style::Dots);
+}
+
+TEST_F(ControllerTest, StyleMenuSetsEveryTrace) {
+    handle_event(s(), key('m'), false);
+    for (int i = 0; i < 4; ++i) handle_event(s(), key(key::kDown), false);  // Mode, Phase units, Scaling, Style
+    handle_event(s(), key(key::kRight), false);                            // → Lines
+    handle_event(s(), key(key::kDown), false);                             // Dots
+    EXPECT_TRUE(handle_event(s(), key(0xff0d), false) & kReduce);
+    EXPECT_EQ(s().traces()->signal(0).style, Style::Dots);
+    EXPECT_EQ(s().traces()->signal(1).style, Style::Dots);
+    EXPECT_TRUE(action::set_style(s(), Style::Lines) & kRepaint);
+    EXPECT_EQ(s().traces()->signal(1).style, Style::Lines);
+}
+
 }  // namespace
 }  // namespace ssp

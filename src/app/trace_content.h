@@ -43,6 +43,8 @@ public:
     void set_visible(std::size_t i, bool v) { sigs_[i].visible = v; }
     /// @brief lines → dots → both → lines.
     void cycle_style(std::size_t i);
+    /// @brief Same style for every trace.
+    void set_style(Style st);
 
     /// @brief x range covering every visible trace (all traces if none are visible).
     Range x_extent(bool index) const;
@@ -59,7 +61,7 @@ public:
     /// @brief y extent of columns [0, done) of the traces that are visible now.
     Span extent(const ReduceResult& r, int done) const override;
     void paint(Framebuffer& fb, const ReduceResult& r, const PaintArgs& a) const override;
-    /// @brief Legend rows (every trace), or none when the legend would say nothing useful.
+    /// @brief Legend rows, one per trace.
     std::vector<LegendEntry> legend(const Theme& th) const override;
 
 private:

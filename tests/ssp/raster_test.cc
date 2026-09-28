@@ -226,6 +226,8 @@ TEST_F(CutTest, XCutIsTheRowInsideTheZoomBox) {
     EXPECT_EQ(sample_value(sig, Comp::Re, 0), 302.0);
     EXPECT_EQ(sig.xstart, 2.0);
     EXPECT_NE(cut->set.title.find("x-cut row 3"), std::string::npos);
+    EXPECT_EQ(sig.name, "row 3");
+    EXPECT_FALSE(cut->set.legend) << "hidden at first, 'l' shows it";
     EXPECT_EQ(cut->views.level(), 0u) << "the cut's home is the box";
     EXPECT_EQ(cut->views.top().x.lo, 2.0);
     EXPECT_EQ(cut->views.top().x.hi, 6.0);
@@ -236,6 +238,7 @@ TEST_F(CutTest, YCutIsTheColumnInsideTheZoomBoxAndSkipsMissingCells) {
     const Signal& sig = cut->traces()->signal(0);
     ASSERT_EQ(sig.n, 4u);
     EXPECT_EQ(sample_value(sig, Comp::Re, 2), 308.0);
+    EXPECT_EQ(sig.name, "column 8");
     EXPECT_EQ(sig.xstart, 55.0);
     EXPECT_EQ(sig.xdelta, 5.0);
 
@@ -250,6 +253,7 @@ TEST_F(CutTest, SteppingStaysInsideTheBox) {
     cut->views.push(View{{3.0, 5.0}, std::nullopt});
     EXPECT_TRUE(step_cut(*cut, 1));
     EXPECT_EQ(sample_value(cut->traces()->signal(0), Comp::Re, 0), 402.0);
+    EXPECT_EQ(cut->traces()->signal(0).name, "row 4");
     EXPECT_EQ(cut->views.level(), 1u) << "stepping keeps the cut's zoom";
     EXPECT_FALSE(step_cut(*cut, 1)) << "row 5 is outside the box";
     EXPECT_FALSE(cut->message.empty());
