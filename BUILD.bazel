@@ -232,7 +232,7 @@ pybind_extension(
 py_wheel(
     name = "signal_sniper_plot_wheel",
     distribution = "signal_sniper_plot_py",
-    version = "1.1.0",
+    version = "2.0.0",
     python_tag = "cp312",
     abi = "cp312",
     platform = "linux_x86_64",

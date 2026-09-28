@@ -12,35 +12,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # X11 headers and shared library required at build time.
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libx11-dev
-
-      # Bazelisk reads .bazeliskrc and downloads the pinned Bazel version.
-      - name: Install Bazelisk
-        run: |
-          sudo apt-get install -y curl
-          sudo curl -fsSL -o /usr/local/bin/bazel \
-            https://github.com/bazelbuild/bazelisk/releases/latest/download/bazelisk-linux-amd64
-          sudo chmod +x /usr/local/bin/bazel
-
-      # Build the wheel. The output is a linux_x86_64 wheel; auditwheel will
-      # repair it in the next step.
-      # -c opt: the default fastbuild mode is unoptimised (4-5x slower plots).
-      - name: Build wheel
-        run: bazel build -c opt //:signal_sniper_plot_wheel
-
-      # auditwheel bundles libsignal_sniper_plot.so into the wheel and
-      # re-tags it with the appropriate manylinux platform string.
-      # libX11 is on the manylinux whitelist and will not be bundled.
-      - name: Repair wheel (auditwheel)
-        run: |
-          pip install auditwheel
-          mkdir -p dist
-          auditwheel repair --wheel-dir dist/ \
-            $(bazel cquery -c opt --output=files //:signal_sniper_plot_wheel)
+      # Builds inside PyPA's manylinux_2_28 image (glibc 2.28), so the wheel installs on
+      # RHEL / CentOS Stream / Alma / Rocky 8+ and Ubuntu 20.04+, not just this runner's distro.
+      # The script builds with -c opt and runs auditwheel repair; the result lands in dist/.
+      - name: Build wheel (manylinux_2_28)
+        run: tools/build_manylinux_wheel.sh
 
       - name: Check wheel
         run: |

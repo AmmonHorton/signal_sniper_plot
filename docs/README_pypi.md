@@ -16,7 +16,8 @@ that takes milliseconds.
 pip install signal_sniper_plot_py
 ```
 
-Linux x86_64, Python 3.12. `libX11` must be installed (it is on any desktop Linux;
+Linux x86_64 with glibc 2.28 or newer (RHEL / CentOS Stream / Alma / Rocky 8+, Ubuntu 20.04+,
+Debian 10+), Python 3.12. `libX11` must be installed (it is on any desktop Linux;
 `sudo apt install libx11-6` or `sudo dnf install libX11` otherwise).
 
 ---

@@ -4,3 +4,4 @@
 /bazel-out**
 /bazel-signal_sniper_plot**
 /bazel-testlogs**
+/dist/
