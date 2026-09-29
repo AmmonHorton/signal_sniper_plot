@@ -9,47 +9,7 @@ load("@rules_python//python:pip.bzl", "compile_pip_requirements")
 # Alternatively, set globally in .bazelrc with: build --cxxopt=-std=c++17
 _COPTS = ["-std=c++17"]
 
-# ── C++ library targets ───────────────────────────────────────────────────────
-
-# Low-level sample/trace types and raw-buffer conversion utilities.
-cc_library(
-    name = "trace_utils",
-    srcs = ["src/trace_utils.cc"],
-    hdrs = ["inc/trace_utils.h"],
-    copts = _COPTS,
-    strip_include_prefix = "inc",
-    visibility = ["//visibility:public"],
-)
-
-# X11 interactive plot session: rendering, event loop, zoom/pan, streaming.
-cc_library(
-    name = "plot_session",
-    srcs = ["src/plot_session.cc"],
-    hdrs = ["inc/plot_session.h"],
-    copts = _COPTS,
-    strip_include_prefix = "inc",
-    deps = [
-        ":trace_utils",
-        "@system_libs//:x11",
-    ],
-    visibility = ["//visibility:public"],
-)
-
-# Public C++ API: thin wrappers over PlotSession.
-cc_library(
-    name = "signal_sniper_plot",
-    srcs = ["src/plot.cc"],
-    hdrs = ["inc/plot.h"],
-    copts = _COPTS,
-    strip_include_prefix = "inc",
-    deps = [
-        ":plot_session",
-        ":trace_utils",
-    ],
-    visibility = ["//visibility:public"],
-)
-
-# ── ssp: new implementation (see docs/ARCHITECTURE_PROPOSAL.md) ──────────────
+# ── ssp: the C++ library (see docs/ARCHITECTURE_PROPOSAL.md) ──────────────────
 # ssp_core has no X11 dependency: it builds, renders and runs the whole interactive loop
 # (against a fake backend) without a display. ssp adds the X11 window.
 
@@ -203,19 +163,6 @@ cc_test(
     data = glob(["tests/golden/*.png"], allow_empty = True),
     deps = [
         ":ssp_core",
-        "@googletest//:gtest_main",
-    ],
-)
-
-# ── Unit tests ────────────────────────────────────────────────────────────────
-# Note: this test opens an X11 window; requires a live display (set DISPLAY).
-
-cc_test(
-    name = "test_signal_sniper_plot",
-    srcs = ["tests/test_plot.cc"],
-    copts = _COPTS,
-    deps = [
-        ":signal_sniper_plot",
         "@googletest//:gtest_main",
     ],
 )

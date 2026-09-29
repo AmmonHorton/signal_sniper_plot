@@ -51,8 +51,8 @@ ssp::raster(ssp::Signal(spec), r);
 ```
 
 `ssp::Session` is the full-control layer under `plot` and `raster` (e.g. an interrupt hook).
-The 1.x functions (`plot_buffer`, `plot_buffer_traces` in `inc/plot.h`) still build as
-`//:signal_sniper_plot` and will be removed later.
+The 1.x C++ functions (`plot_buffer`, `plot_buffer_traces`) were removed in 2.0; Python's
+`plot_buffer` still works.
 
 ---
 
@@ -75,7 +75,6 @@ tests/golden/     Reference images for the golden tests
 tools/            Benchmark, C++ demos, release build script, font/colormap generators
 bazel/            Host X11 for Bazel; pinned pip requirements
 docs/             This file, the PyPI readme, dependencies, architecture notes
-inc/*.h, src/plot*.cc, src/trace_utils.cc, tests/test_plot.cc   1.x implementation (legacy)
 ```
 
 [ARCHITECTURE_PROPOSAL.md](ARCHITECTURE_PROPOSAL.md) explains the design: zero-copy `Signal`
