@@ -186,9 +186,10 @@ packaging/build.sh deb     # Ubuntu 20.04 and newer
 packaging/build.sh all     # needs Docker; writes dist/
 ```
 
-Pushing a `v*` tag runs `.github/workflows/build.yml`: it runs `packaging/build.sh all`, checks
-the wheel with `twine check` and uploads it to TestPyPI, and attaches the RPM and .deb to the
-workflow run. The `TEST_PYPI_API_TOKEN` secret must be set in the repository's GitHub Actions
+Every pull request and every push to `main` runs `.github/workflows/ci.yml`: `bazel test //...`
+plus the wheel, RPM and .deb builds (the artifacts are kept with the run). Pushing a `v*` tag
+runs `.github/workflows/release.yml`, which builds all three again, checks the wheel with
+`twine check` and uploads it to TestPyPI, and attaches the RPM and .deb to the run.  The `TEST_PYPI_API_TOKEN` secret must be set in the repository's GitHub Actions
 settings. The version is set in `MODULE.bazel` and `packaging/BUILD.bazel`.
 
 ---

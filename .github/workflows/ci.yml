@@ -1,5 +1,7 @@
 name: CI
 
+# Every PR (and every push to main) must pass the tests and build every release artifact.
+# Publishing happens only in release.yml, on v* tags.
 on:
   push:
     branches: [main]
@@ -17,3 +19,28 @@ jobs:
       # GitHub's Ubuntu images ship Bazelisk as `bazel`; it reads .bazeliskrc.
       - name: Test (no display needed)
         run: bazel test //...
+
+  packages:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Each is built inside the oldest distribution it supports (see packaging/build.sh).
+        target: [wheel, rpm, deb]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ${{ matrix.target }}
+        run: packaging/build.sh ${{ matrix.target }}
+
+      - name: Check wheel
+        if: matrix.target == 'wheel'
+        run: |
+          pip install twine
+          twine check dist/*.whl
+
+      - name: Keep the ${{ matrix.target }} with this run
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*
