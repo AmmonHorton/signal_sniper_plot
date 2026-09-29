@@ -32,6 +32,7 @@ These are declared in `MODULE.bazel` and require no manual action.
 | Dependency | Version | Purpose |
 |---|---|---|
 | `rules_cc` | 0.2.16 | C++ build rules |
+| `rules_pkg` | 1.3.0 | RPM / .deb packaging (`packaging/`); the RPM also needs `rpmbuild`, which `packaging/build.sh rpm` provides |
 | `zlib` | 1.3.1 | PNG encoding (`save_png`, Ctrl-S). Built from source and linked statically: not needed where the library or wheel is used |
 | `googletest` | 1.17.0 | Unit testing framework |
 | `rules_python` | 1.8.3 | Python 3.12 hermetic toolchain and pip integration |

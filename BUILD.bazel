@@ -3,7 +3,6 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
 load("@pybind11_bazel//:build_defs.bzl", "pybind_extension")
 load("@rules_python//python:defs.bzl", "py_binary", "py_test")
-load("@rules_python//python:packaging.bzl", "py_wheel")
 load("@rules_python//python:pip.bzl", "compile_pip_requirements")
 
 # C++17 is required across all targets.
@@ -116,6 +115,16 @@ cc_library(
     visibility = ["//visibility:public"],
 )
 
+# The installed C++ API (packaging/ ships these).
+filegroup(
+    name = "ssp_public_headers",
+    srcs = [
+        "inc/ssp/plot.h",
+        "inc/ssp/types.h",
+    ],
+    visibility = ["//packaging:__pkg__"],
+)
+
 # Public C++ library: ssp::plot / ssp::Session (X11 window) and ssp::save_png.
 cc_library(
     name = "ssp",
@@ -220,34 +229,6 @@ pybind_extension(
     copts = _COPTS,
     deps = [":ssp"],
     visibility = ["//visibility:public"],
-)
-
-# ── Python wheel ─────────────────────────────────────────────────────────────
-# Produces a platform wheel (.whl) containing the pybind11 extension.
-# The platform tag is set to linux_x86_64 here; CI runs auditwheel repair
-# afterwards to repackage it with the correct manylinux tag and bundle
-# libsignal_sniper_plot.so alongside the extension.
-#   bazel build //:signal_sniper_plot_wheel
-
-py_wheel(
-    name = "signal_sniper_plot_wheel",
-    distribution = "signal_sniper_plot_py",
-    version = "2.0.0",
-    python_tag = "cp312",
-    abi = "cp312",
-    platform = "linux_x86_64",
-    description_file = "docs/README_pypi.md",
-    summary = "A C++ DSP plotting library with a pybind11 Python wrapper",
-    author = "Ammon Horton",
-    author_email = "aj_horton@hotmail.com",
-    classifiers = [
-        "Programming Language :: Python :: 3",
-        "Programming Language :: C++",
-        "License :: OSI Approved :: MIT License",
-        "Operating System :: POSIX :: Linux",
-    ],
-    python_requires = ">=3.12",
-    deps = [":signal_sniper_plot_py"],
 )
 
 # ── Pip dependency management ─────────────────────────────────────────────────

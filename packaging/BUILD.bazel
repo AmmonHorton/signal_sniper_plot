@@ -1,0 +1,127 @@
+"""Distribution packages: the Python wheel, and RPM / .deb packages of the C++ library.
+
+Release artifacts must be built on the oldest distribution they should install on, so use
+packaging/build.sh, which builds each one in the right container:
+
+    packaging/build.sh wheel   # manylinux_2_28: any Linux with glibc >= 2.28
+    packaging/build.sh rpm     # Rocky Linux 8: RHEL / CentOS Stream / Alma / Rocky 8+
+    packaging/build.sh deb     # Ubuntu 20.04 and newer
+
+The RPM and deb install the same files:
+    <libdir>/libsignal_sniper_plot.so.2        the library (core and zlib linked in)
+    <libdir>/libsignal_sniper_plot.so          -> .so.2, for -lsignal_sniper_plot
+    <libdir>/pkgconfig/signal_sniper_plot.pc
+    /usr/include/signal_sniper_plot/ssp/*.h    #include "ssp/plot.h"
+so a program builds with  g++ -std=c++17 app.cc $(pkg-config --cflags --libs signal_sniper_plot)
+"""
+
+load("@rules_cc//cc:defs.bzl", "cc_shared_library")
+load("@rules_pkg//pkg:deb.bzl", "pkg_deb")
+load("@rules_pkg//pkg:rpm.bzl", "pkg_rpm")
+load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
+load("@rules_python//python:packaging.bzl", "py_wheel")
+load(":install_files.bzl", "install_files")
+
+VERSION = "2.0.0"  # keep in sync with MODULE.bazel
+
+SOVERSION = "2"
+
+LIB = "libsignal_sniper_plot.so"
+
+SUMMARY = "Fast interactive DSP plots (xplot / xraster) for X11"
+
+DESCRIPTION = """Line plots of 1-D signals and raster plots of frames in an X11 window, for
+arrays of any size: samples are read in place and a level-of-detail pyramid makes every
+view after the first cost O(pixels). C++17 API in ssp/plot.h."""
+
+# ── Python wheel ──────────────────────────────────────────────────────────────
+
+py_wheel(
+    name = "wheel",
+    distribution = "signal_sniper_plot_py",
+    version = VERSION,
+    python_tag = "cp312",
+    abi = "cp312",
+    platform = "linux_x86_64",  # packaging/build.sh re-tags it manylinux_2_28
+    description_file = "//docs:README_pypi.md",
+    summary = SUMMARY,
+    author = "Ammon Horton",
+    author_email = "aj_horton@hotmail.com",
+    classifiers = [
+        "Programming Language :: Python :: 3",
+        "Programming Language :: C++",
+        "License :: OSI Approved :: MIT License",
+        "Operating System :: POSIX :: Linux",
+    ],
+    python_requires = ">=3.12",
+    deps = ["//:signal_sniper_plot_py"],
+)
+
+# ── The shared library ────────────────────────────────────────────────────────
+
+cc_shared_library(
+    name = "libsignal_sniper_plot",
+    shared_lib_name = LIB + "." + SOVERSION,
+    user_link_flags = [
+        "-Wl,-soname," + LIB + "." + SOVERSION,
+        # cc_shared_library drops linkopts of the deps it links in statically, so X11
+        # (a system library, linked dynamically) is named here.
+        "-lX11",
+    ],
+    deps = [
+        "//:ssp",       # plot, raster, Session (X11)
+        "//:ssp_core",  # save_png, save_raster_png
+    ],
+)
+
+# ── Installed files, for a distribution's library directory ───────────────────
+
+RPM_FILES = install_files("rpm_files", "/usr/lib64", ":libsignal_sniper_plot", LIB, SOVERSION, SUMMARY, VERSION)
+
+DEB_FILES = install_files("deb_files", "/usr/lib/x86_64-linux-gnu", ":libsignal_sniper_plot", LIB, SOVERSION, SUMMARY, VERSION)
+
+# ── RPM (build with packaging/build.sh rpm; needs rpmbuild) ───────────────────
+
+pkg_rpm(
+    name = "rpm",
+    package_name = "signal-sniper-plot",
+    version = VERSION,
+    release = "1",
+    architecture = "x86_64",
+    license = "MIT",
+    summary = SUMMARY,
+    description = DESCRIPTION,
+    url = "https://github.com/AmmonHorton/signal_sniper_plot",
+    requires = ["libX11"],  # rpmbuild adds libc / libstdc++ from the ELF itself
+    post_scriptlet = "/sbin/ldconfig",
+    postun_scriptlet = "/sbin/ldconfig",
+    srcs = RPM_FILES,
+    tags = ["manual"],  # only where rpmbuild exists
+)
+
+# ── Debian package (build with packaging/build.sh deb) ────────────────────────
+
+pkg_tar(
+    name = "deb_data",
+    srcs = DEB_FILES,
+)
+
+pkg_deb(
+    name = "deb",
+    package = "signal-sniper-plot",
+    version = VERSION,
+    architecture = "amd64",
+    maintainer = "Ammon Horton <aj_horton@hotmail.com>",
+    description = SUMMARY + "\n" + DESCRIPTION,
+    homepage = "https://github.com/AmmonHorton/signal_sniper_plot",
+    depends = [
+        "libc6 (>= 2.31)",
+        "libstdc++6",
+        "libx11-6",
+    ],
+    section = "libs",
+    priority = "optional",
+    postinst = "deb/postinst",
+    postrm = "deb/postrm",
+    data = ":deb_data",
+)

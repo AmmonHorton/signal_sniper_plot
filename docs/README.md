@@ -110,7 +110,7 @@ bazel build //...                            # everything
 bazel build //:ssp                           # C++ library (X11 window + headless)
 bazel build //:ssp_core                      # headless core: no X11 dependency
 bazel build //:signal_sniper_plot_py         # Python extension .so
-bazel build -c opt //:signal_sniper_plot_wheel   # wheel for this machine only (see Releasing)
+bazel build -c opt //packaging:wheel         # wheel / .deb for this machine only (see Releasing)
 ```
 
 Use `-c opt` for anything performance-related; Bazel's default build is unoptimised and
@@ -175,18 +175,24 @@ bazel run //:requirements.update
 
 ## Releasing
 
-Release wheels are built inside PyPA's `manylinux_2_28` image, so they install on any x86_64
-Linux with glibc 2.28 or newer (RHEL / CentOS Stream 8+, Ubuntu 20.04+). A wheel built
-directly on a newer host would need that host's glibc.
+Everything distributable is defined in `packaging/`: the Python wheel, and RPM / .deb packages
+of the C++ library (shared library, headers and a pkg-config file, so a program builds with
+`g++ -std=c++17 app.cc $(pkg-config --cflags --libs signal_sniper_plot)`).
+
+Each is built inside the oldest distribution it should install on, since a package built on a
+newer host needs that host's glibc:
 
 ```sh
-tools/build_manylinux_wheel.sh   # needs Docker; writes dist/*.whl
+packaging/build.sh wheel   # manylinux_2_28: pip on any x86_64 Linux with glibc >= 2.28
+packaging/build.sh rpm     # Rocky Linux 8: RHEL / CentOS Stream / Alma / Rocky 8 and newer
+packaging/build.sh deb     # Ubuntu 20.04 and newer
+packaging/build.sh all     # needs Docker; writes dist/
 ```
 
-Pushing a `v*` tag runs `.github/workflows/build.yml`, which runs the same script, checks the
-wheel with `twine check`, and uploads it to TestPyPI. The `TEST_PYPI_API_TOKEN` secret must be
-set in the repository's GitHub Actions settings. The version is set in `MODULE.bazel` and in
-the `signal_sniper_plot_wheel` rule in `BUILD.bazel`.
+Pushing a `v*` tag runs `.github/workflows/build.yml`: it runs `packaging/build.sh all`, checks
+the wheel with `twine check` and uploads it to TestPyPI, and attaches the RPM and .deb to the
+workflow run. The `TEST_PYPI_API_TOKEN` secret must be set in the repository's GitHub Actions
+settings. The version is set in `MODULE.bazel` and `packaging/BUILD.bazel`.
 
 ---
 

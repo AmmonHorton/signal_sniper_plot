@@ -12,11 +12,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Builds inside PyPA's manylinux_2_28 image (glibc 2.28), so the wheel installs on
-      # RHEL / CentOS Stream / Alma / Rocky 8+ and Ubuntu 20.04+, not just this runner's distro.
-      # The script builds with -c opt and runs auditwheel repair; the result lands in dist/.
-      - name: Build wheel (manylinux_2_28)
-        run: tools/build_manylinux_wheel.sh
+      # Each artifact is built inside the oldest distribution it supports (see
+      # packaging/build.sh): the wheel on manylinux_2_28, the RPM on Rocky Linux 8, the .deb
+      # on Ubuntu 20.04. Everything lands in dist/.
+      - name: Build wheel, RPM and .deb
+        run: packaging/build.sh all
+
+      - name: Keep the RPM and .deb with this run
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages
+          path: |
+            dist/*.rpm
+            dist/*.deb
 
       - name: Check wheel
         run: |
