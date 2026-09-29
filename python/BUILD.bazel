@@ -1,0 +1,46 @@
+"""The Python module `signal_sniper_plot` (pip: signal_sniper_plot_py)."""
+
+load("@pybind11_bazel//:build_defs.bzl", "pybind_extension")
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
+load("@rules_python//python:pip.bzl", "compile_pip_requirements")
+
+exports_files([
+    "README.md",  # the PyPI project page
+    "signal_sniper_plot_py.py",
+])
+
+# signal_sniper_plot.so
+pybind_extension(
+    name = "signal_sniper_plot",
+    srcs = ["module.cc"],
+    visibility = ["//packaging:__pkg__"],
+    deps = ["//ssp"],
+)
+
+# What Python code depends on: the extension plus the deprecated signal_sniper_plot_py alias,
+# importable from this directory.
+py_library(
+    name = "lib",
+    srcs = ["signal_sniper_plot_py.py"],
+    data = [":signal_sniper_plot"],
+    imports = ["."],
+    visibility = ["//visibility:public"],
+)
+
+py_test(
+    name = "signal_sniper_plot_test",
+    srcs = ["signal_sniper_plot_test.py"],
+    deps = [
+        ":lib",
+        "@pip_deps//numpy",
+    ],
+)
+
+# Regenerate requirements_lock.txt after editing requirements.in:
+#   bazel run //python:requirements.update
+compile_pip_requirements(
+    name = "requirements",
+    src = "requirements.in",
+    requirements_txt = "requirements_lock.txt",
+    python_version = "3.12",
+)

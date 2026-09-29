@@ -1,0 +1,26 @@
+"""Reading samples: typed dispatch over a Signal, scans, and the min/max level-of-detail pyramid."""
+
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+cc_library(
+    name = "core",
+    srcs = ["lod.cc"],
+    hdrs = [
+        "cancel.h",
+        "component.h",
+        "dispatch.h",
+        "lod.h",
+        "scan.h",
+    ],
+    visibility = ["//ssp:__subpackages__"],
+    deps = ["//ssp:api"],
+)
+
+cc_test(
+    name = "lod_test",
+    srcs = ["lod_test.cc"],
+    deps = [
+        ":core",
+        "@googletest//:gtest_main",
+    ],
+)

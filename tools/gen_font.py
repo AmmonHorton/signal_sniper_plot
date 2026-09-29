@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Convert an X11 misc-fixed PCF font into the embedded glyph table src/render/font_6x13.inc.
+"""Convert an X11 misc-fixed PCF font into the embedded glyph table ssp/render/font_6x13.inc.
 
 The misc-fixed fonts are public domain. Usage:
-    python3 tools/gen_font.py /usr/share/fonts/X11/misc/6x13.pcf.gz > src/render/font_6x13.inc
+    python3 tools/gen_font.py /usr/share/fonts/X11/misc/6x13.pcf.gz > ssp/render/font_6x13.inc
 """
 import gzip
 import struct

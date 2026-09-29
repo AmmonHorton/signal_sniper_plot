@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Extract SigPlot/XMidas colormaps from sigplot's js/m.js into src/render/colormaps.inc.
+"""Extract SigPlot/XMidas colormaps from sigplot's js/m.js into ssp/render/colormaps.inc.
 
-    python3 tools/gen_colormaps.py ../sigplot/js/m.js > src/render/colormaps.inc
+    python3 tools/gen_colormaps.py ../sigplot/js/m.js > ssp/render/colormaps.inc
 """
 import re
 import sys

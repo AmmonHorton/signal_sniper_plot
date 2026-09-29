@@ -37,7 +37,7 @@ PC""".format(libdir = libdir, summary = summary, version = version),
     )
     pkg_files(
         name = name + "_headers",
-        srcs = ["//:ssp_public_headers"],
+        srcs = ["//ssp:public_headers"],
         prefix = "/usr/include/signal_sniper_plot/ssp",
     )
     return [name + "_lib", name + "_devlink", name + "_pc", name + "_headers"]

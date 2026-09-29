@@ -1,0 +1,48 @@
+"""signal_sniper_plot's C++ library. Applications depend on //ssp and #include "ssp/plot.h"."""
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# The public API: plot, raster, Session, save_png and the types they take.
+cc_library(
+    name = "api",
+    hdrs = [
+        "plot.h",
+        "types.h",
+    ],
+    visibility = ["//ssp:__subpackages__"],
+)
+
+# Everything: interactive X11 windows (plot, raster, Session) and headless PNG output.
+cc_library(
+    name = "ssp",
+    srcs = ["plot.cc"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":api",
+        ":headless",
+        "//ssp/app",
+        "//ssp/platform/x11",
+    ],
+)
+
+# Only save_png / save_raster_png: renders without a display and has no X11 dependency.
+cc_library(
+    name = "headless",
+    srcs = ["save_png.cc"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":api",
+        "//ssp/app",
+        "//ssp/render",
+    ],
+)
+
+# Installed by the RPM and .deb.
+filegroup(
+    name = "public_headers",
+    srcs = [
+        "plot.h",
+        "types.h",
+    ],
+    visibility = ["//packaging:__pkg__"],
+)

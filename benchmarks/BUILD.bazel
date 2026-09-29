@@ -1,0 +1,11 @@
+"""Rendering benchmark on 200M complex samples (no display):
+    bazel run -c opt //benchmarks:render_bench -- [num_samples]
+"""
+
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+
+cc_binary(
+    name = "render_bench",
+    srcs = ["render_bench.cc"],
+    deps = ["//ssp/app"],
+)

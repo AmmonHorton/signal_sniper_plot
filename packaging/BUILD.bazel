@@ -43,7 +43,7 @@ py_wheel(
     python_tag = "cp312",
     abi = "cp312",
     platform = "linux_x86_64",  # packaging/build.sh re-tags it manylinux_2_28
-    description_file = "//docs:README_pypi.md",
+    description_file = "//python:README.md",
     summary = SUMMARY,
     author = "Ammon Horton",
     author_email = "aj_horton@hotmail.com",
@@ -54,7 +54,12 @@ py_wheel(
         "Operating System :: POSIX :: Linux",
     ],
     python_requires = ">=3.12",
-    deps = ["//:signal_sniper_plot_py"],
+    # The extension and the deprecated signal_sniper_plot_py alias, at the top of the wheel.
+    strip_path_prefixes = ["python"],
+    deps = [
+        "//python:lib",                 # signal_sniper_plot_py.py (py_wheel skips its data)
+        "//python:signal_sniper_plot",  # signal_sniper_plot.so
+    ],
 )
 
 # ── The shared library ────────────────────────────────────────────────────────
@@ -69,8 +74,8 @@ cc_shared_library(
         "-lX11",
     ],
     deps = [
-        "//:ssp",       # plot, raster, Session (X11)
-        "//:ssp_core",  # save_png, save_raster_png
+        "//ssp",           # plot, raster, Session (X11)
+        "//ssp:headless",  # save_png, save_raster_png (not referenced by //ssp, so named here)
     ],
 )
 

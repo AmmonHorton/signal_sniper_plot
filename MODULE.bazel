@@ -45,13 +45,13 @@ python.toolchain(
 )
 use_repo(python, "python_3_12")
 
-# Third-party pip packages (numpy required by python/test_plot.py).
-# Run `bazel run //:requirements.update` to regenerate the lock file.
+# Third-party pip packages (numpy, for the Python tests and examples).
+# Run `bazel run //python:requirements.update` to regenerate python/requirements_lock.txt.
 pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
 pip.parse(
     hub_name      = "pip_deps",
     python_version = "3.12",
-    requirements_lock = "bazel/python_deps/requirements_lock.txt",
+    requirements_lock = "//python:requirements_lock.txt",
 )
 use_repo(pip, "pip_deps")
 
@@ -75,5 +75,5 @@ _system_libs_repo = use_repo_rule(
 _system_libs_repo(
     name = "system_libs",
     path = "/usr",
-    build_file = "//bazel/system_libs:BUILD.bazel",
+    build_file = "//third_party:x11.BUILD",
 )

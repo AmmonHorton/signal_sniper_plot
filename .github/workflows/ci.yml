@@ -1,0 +1,19 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install X11 headers
+        run: sudo apt-get update && sudo apt-get install -y libx11-dev
+
+      # GitHub's Ubuntu images ship Bazelisk as `bazel`; it reads .bazeliskrc.
+      - name: Test (no display needed)
+        run: bazel test //...

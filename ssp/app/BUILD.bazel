@@ -1,0 +1,73 @@
+"""The interactive application: xplot and xraster content, screens, input, menu, overlays, cuts,
+the render worker and the event loop. Runs headless against a fake backend in the tests."""
+
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+cc_library(
+    name = "app",
+    srcs = [
+        "compose.cc",
+        "controller.cc",
+        "cut.cc",
+        "job_runner.cc",
+        "menu.cc",
+        "overlay.cc",
+        "raster_content.cc",
+        "screen.cc",
+        "session.cc",
+        "trace_content.cc",
+        "trace_content_ir.cc",
+    ],
+    hdrs = [
+        "compose.h",
+        "content.h",
+        "controller.h",
+        "cut.h",
+        "job_runner.h",
+        "menu.h",
+        "overlay.h",
+        "raster_content.h",
+        "screen.h",
+        "session.h",
+        "settings.h",
+        "trace_content.h",
+    ],
+    linkopts = ["-lpthread"],
+    visibility = [
+        "//benchmarks:__pkg__",
+        "//ssp:__subpackages__",
+    ],
+    deps = [
+        "//ssp:api",
+        "//ssp/core",
+        "//ssp/platform:backend",
+        "//ssp/render",
+    ],
+)
+
+[cc_test(
+    name = name,
+    srcs = [name + ".cc"],
+    deps = [
+        ":app",
+        "@googletest//:gtest_main",
+    ],
+) for name in [
+    "controller_test",
+    "raster_content_test",
+    "session_test",
+    "trace_test",
+]]
+
+# Renders known scenes and compares them pixel for pixel with testdata/golden/.
+# After an intended visual change, inspect and accept the new images with
+#   SSP_UPDATE_GOLDENS=1 bazel run //ssp/app:golden_test
+cc_test(
+    name = "golden_test",
+    srcs = ["golden_test.cc"],
+    data = glob(["testdata/golden/*.png"]),
+    deps = [
+        ":app",
+        "@googletest//:gtest_main",
+    ],
+)
