@@ -1,0 +1,18 @@
+"""C++ examples (need a display):
+    bazel run -c opt //examples/cpp:plot_demo     three 50M-sample traces
+    bazel run -c opt //examples/cpp:raster_demo   a 20000 x 4096 spectrogram
+"""
+
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+
+cc_binary(
+    name = "plot_demo",
+    srcs = ["plot_demo.cc"],
+    deps = ["//ssp"],
+)
+
+cc_binary(
+    name = "raster_demo",
+    srcs = ["raster_demo.cc"],
+    deps = ["//ssp"],
+)

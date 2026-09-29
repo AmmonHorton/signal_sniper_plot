@@ -1,0 +1,2 @@
+# BUILD files for dependencies taken from the host system (see MODULE.bazel).
+exports_files(["x11.BUILD"])

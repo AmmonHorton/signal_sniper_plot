@@ -5,14 +5,30 @@ An interactive X11 DSP plotting library with C++ and Python bindings.
 
 module(
     name = "signal_sniper_plot",
-    version = "1.1.0",
+    version = "2.0.0",
     compatibility_level = 1,
 )
 
 # ── C++ build rules ───────────────────────────────────────────────────────────
 
-bazel_dep(name = "platforms", version = "0.0.10")
+bazel_dep(name = "platforms", version = "1.0.0")
 bazel_dep(name = "rules_cc", version = "0.2.16")
+
+# ── Distribution packages (packaging/) ─────────────────────────────────────────
+
+bazel_dep(name = "rules_pkg", version = "1.3.0")
+
+# pkg_rpm runs the host's rpmbuild; this finds it (the RPM target is manual, so hosts
+# without rpmbuild still build //...).
+find_rpm = use_extension("@rules_pkg//toolchains/rpm:rpmbuild_configure.bzl", "find_system_rpmbuild_bzlmod")
+use_repo(find_rpm, "rules_pkg_rpmbuild")
+register_toolchains("@rules_pkg_rpmbuild//:all")
+
+# ── Libraries linked into the product ─────────────────────────────────────────
+# Built from source and linked statically, so they are not runtime dependencies of the
+# wheel (its only non-system library is libX11).
+
+bazel_dep(name = "zlib", version = "1.3.1.bcr.8")  # PNG encoding (save_png, Ctrl-S)
 
 # ── Unit testing ──────────────────────────────────────────────────────────────
 
@@ -29,13 +45,13 @@ python.toolchain(
 )
 use_repo(python, "python_3_12")
 
-# Third-party pip packages (numpy required by python/test_plot.py).
-# Run `bazel run //:requirements.update` to regenerate the lock file.
+# Third-party pip packages (numpy, for the Python tests and examples).
+# Run `bazel run //python:requirements.update` to regenerate python/requirements_lock.txt.
 pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
 pip.parse(
     hub_name      = "pip_deps",
     python_version = "3.12",
-    requirements_lock = "bazel/python_deps/requirements_lock.txt",
+    requirements_lock = "//python:requirements_lock.txt",
 )
 use_repo(pip, "pip_deps")
 
@@ -59,5 +75,5 @@ _system_libs_repo = use_repo_rule(
 _system_libs_repo(
     name = "system_libs",
     path = "/usr",
-    build_file = "//bazel/system_libs:BUILD.bazel",
+    build_file = "//third_party:x11.BUILD",
 )

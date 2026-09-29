@@ -1,0 +1,52 @@
+"""Drawing: framebuffer, embedded font, PNG, axes and ticks, colormaps, 1-D reduce and paint."""
+
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+cc_library(
+    name = "render",
+    srcs = [
+        "axis.cc",
+        "colormap.cc",
+        "frame.cc",
+        "framebuffer.cc",
+        "png.cc",
+        "trace.cc",
+    ],
+    hdrs = [
+        "axis.h",
+        "colormap.h",
+        "frame.h",
+        "framebuffer.h",
+        "png.h",
+        "trace.h",
+    ],
+    # Generated tables (tools/gen_font.py, tools/gen_colormaps.py).
+    textual_hdrs = [
+        "colormaps.inc",
+        "font_6x13.inc",
+    ],
+    visibility = ["//ssp:__subpackages__"],
+    deps = [
+        "//ssp:api",
+        "//ssp/core",
+        "@zlib",
+    ],
+)
+
+cc_test(
+    name = "axis_test",
+    srcs = ["axis_test.cc"],
+    deps = [
+        ":render",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "framebuffer_test",
+    srcs = ["framebuffer_test.cc"],
+    deps = [
+        ":render",
+        "@googletest//:gtest_main",
+    ],
+)

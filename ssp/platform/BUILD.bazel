@@ -1,0 +1,10 @@
+"""The interface between the app and a window system. x11/ implements it."""
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+cc_library(
+    name = "backend",
+    hdrs = ["backend.h"],
+    visibility = ["//ssp:__subpackages__"],
+    deps = ["//ssp/render"],
+)

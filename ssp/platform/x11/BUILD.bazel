@@ -1,0 +1,26 @@
+"""The X11 (Xlib) window backend."""
+
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+cc_library(
+    name = "x11",
+    srcs = ["x11_backend.cc"],
+    visibility = ["//ssp:__subpackages__"],
+    deps = [
+        "//ssp/platform:backend",
+        "@system_libs//:x11",
+    ],
+)
+
+# Needs an X display; skips without one:
+#   Xvfb :99 &  DISPLAY=:99 bazel test //ssp/platform/x11:x11_backend_test --test_env=DISPLAY
+cc_test(
+    name = "x11_backend_test",
+    srcs = ["x11_backend_test.cc"],
+    tags = ["manual"],
+    deps = [
+        ":x11",
+        "@googletest//:gtest_main",
+        "@system_libs//:x11",
+    ],
+)

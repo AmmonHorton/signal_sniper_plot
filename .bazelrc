@@ -1,0 +1,13 @@
+# The whole project is C++17.
+build --cxxopt=-std=c++17 --host_cxxopt=-std=c++17
+
+test --test_output=errors
+
+# ThreadSanitizer: bazel test --config=tsan //ssp/...
+# (setarch -R: TSan cannot cope with the high ASLR entropy of recent kernels.)
+build:tsan --copt=-fsanitize=thread --linkopt=-fsanitize=thread --copt=-O1 --copt=-g
+test:tsan --run_under="setarch x86_64 -R"
+
+# AddressSanitizer + UndefinedBehaviorSanitizer: bazel test --config=asan //ssp/...
+build:asan --copt=-fsanitize=address,undefined --linkopt=-fsanitize=address,undefined
+build:asan --copt=-O1 --copt=-g --copt=-fno-omit-frame-pointer
